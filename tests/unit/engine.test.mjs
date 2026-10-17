@@ -11,6 +11,7 @@ describe('config', () => {
     assert.equal(cfg.streaks.max_freezes, 2);
     assert.ok(!cfg.capped_sources.includes('post'));
     assert.ok(!cfg.capped_sources.includes('reflection'));
+    assert.deepEqual(cfg.streaks.milestones, [3, 7, 30]);
   });
 });
 
@@ -330,6 +331,35 @@ describe('tiers', () => {
     s.fraudFlags = 1;
     assert.notEqual(E.tier(s, cfg).reached.gig_ready, true);
   });
+  describe('thresholds come from config', () => {
+    const verified = views => { const s = freshState(); s.posts = [{ verified: true, views }]; return s; };
+    const mod = fn => { const c = structuredClone(cfg); fn(id => c.tiers.find(t => t.id === id)); return c; };
+    test('rising and breakout views / followers', () => {
+      assert.equal(E.tier(verified(1000), cfg).current.id, 'rising');
+      assert.equal(E.tier(verified(999), cfg).current.id, 'poster');
+      assert.equal(E.tier(verified(999), mod(t => { t('rising').min_best_views = 500; })).current.id, 'rising');
+      assert.equal(E.tier(verified(10000), cfg).current.id, 'breakout');
+      assert.equal(E.tier(verified(10000), mod(t => { t('breakout').min_best_views = 20000; })).current.id, 'rising');
+      const s = freshState(); s.followers = 100;
+      assert.equal(E.tier(s, cfg).current.id, 'rising');
+      assert.equal(E.tier(s, mod(t => { t('rising').min_followers = 150; })).current.id, 'starter');
+      s.followers = 1000;
+      assert.equal(E.tier(s, mod(t => { t('breakout').min_followers = 5000; })).current.id, 'rising');
+    });
+    test('consistent goal weeks', () => {
+      const s = freshState(); s.weeklyGoalStreak = 3;
+      assert.equal(E.tier(s, cfg).reached.consistent, false);
+      assert.equal(E.tier(s, mod(t => { t('consistent').goal_weeks = 3; })).reached.consistent, true);
+    });
+    test('gig-ready average score and window', () => {
+      const s = verified(12000); s.weeklyGoalStreak = 4;
+      s.reps = [...scoredReps(10, 1), ...scoredReps(5, 9)];
+      assert.equal(E.tier(s, cfg).reached.gig_ready, false, 'last 10 average is 5');
+      assert.equal(E.tier(s, mod(t => { t('gig_ready').avg_over_reps = 5; })).reached.gig_ready, true);
+      s.reps = scoredReps(10, 6);
+      assert.equal(E.tier(s, mod(t => { t('gig_ready').min_avg_score = 6; })).reached.gig_ready, true);
+    });
+  });
   test('average uses only the last 10 graded reps', () => {
     const s = freshState();
     s.posts = [{ verified: true, views: 12000 }]; s.weeklyGoalStreak = 4;
@@ -423,5 +453,271 @@ describe('quiet hours and streak-at-risk window', () => {
     assert.equal(E.reminderMinutes(cfg, { notifyTime: '23:00' }), hm(8));
     assert.equal(E.reminderMinutes(cfg, { notifyTime: '06:30' }), hm(8));
     assert.equal(E.reminderMinutes(cfg, { notifyTime: '23:00', quietStart: '23:30', quietEnd: '07:00' }), hm(23));
+  });
+});
+
+describe('self-reported posts', () => {
+  // Wed 2026-10-14 noon; the week runs Mon 10-12 to Sun 10-18.
+  const WED = '2026-10-14', MON = '2026-10-12', now = at(WED);
+  const ok = input => E.validatePost({ platform: 'instagram', date: WED, ...input }, cfg, now);
+  const bad = (input, re, when = now) => assert.throws(() => E.validatePost(input, cfg, when), re, JSON.stringify(input));
+
+  test('basics: trims, lowercases the platform, stores the manual-post shape', () => {
+    const p = E.validatePost({ date: MON, platform: '  YouTube ', format: '  Short  ', note: '  hi  ', views: ' 1840 ', ideaId: 'i1' }, cfg, now);
+    assert.match(p.id, /^post_/);
+    assert.deepEqual({ ...p, id: undefined, viewsUpdatedAt: undefined }, {
+      id: undefined, ideaId: 'i1', date: MON, platform: 'youtube', format: 'Short', views: 1840, viewsUpdatedAt: undefined,
+      note: 'hi', source: 'manual', verified: false, loggedOn: WED
+    });
+    assert.equal(p.viewsUpdatedAt, new Date(now).toISOString());
+  });
+
+  test('views are optional: missing, null and empty string all mean none', () => {
+    for (const views of [undefined, null, '', '   ']) {
+      const p = ok({ views });
+      assert.equal(p.views, null);
+      assert.equal(p.viewsUpdatedAt, null);
+    }
+    assert.equal(ok({}).ideaId, null);
+  });
+
+  test('format and note are capped after trimming', () => {
+    assert.equal(ok({ format: 'a'.repeat(100), note: 'b'.repeat(1000) }).format.length, cfg.posts.format_max);
+    assert.equal(ok({ format: 'a'.repeat(100), note: 'b'.repeat(1000) }).note.length, cfg.posts.note_max);
+    assert.equal(ok({ note: ' '.repeat(10) + 'c'.repeat(cfg.posts.note_max) }).note, 'c'.repeat(cfg.posts.note_max));
+    assert.equal(ok({ note: '   ', format: null }).note, '');
+    assert.equal(ok({ format: null }).format, '');
+    const long = ok({ note: 'x'.repeat(cfg.posts.note_max - 1) + ' yyyy' });
+    assert.equal(long.note, long.note.trim());
+  });
+
+  test('platform must be on the list', () => {
+    for (const platform of ['tiktok', '', null, undefined, 5, ['youtube'], 'constructor', '__proto__']) bad({ date: MON, platform }, /platform/i);
+    bad(null, /platform/i);
+    bad(undefined, /platform/i);
+  });
+
+  test('date must be a real YYYY-MM-DD, never in the future', () => {
+    for (const date of ['2026-02-30', '2026-02-29', '2026-13-01', '', undefined, '01/05/2026', '2026-1-5', ' 2026-10-05']) bad({ platform: 'youtube', date }, /date/i);
+    bad({ platform: 'youtube', date: '2026-10-15' }, /future/i);
+    bad({ platform: 'youtube', date: '9999-12-31' }, /future/i);
+    assert.equal(ok({ date: WED }).date, WED, 'today is fine');
+  });
+
+  test('leap day and year boundary', () => {
+    const v = (date, today) => E.validatePost({ platform: 'youtube', date }, cfg, at(today));
+    assert.equal(v('2028-02-29', '2028-02-29').date, '2028-02-29');
+    assert.throws(() => v('2028-02-29', '2028-02-28'), /future/i);
+    assert.equal(v('2025-12-31', '2026-01-01').date, '2025-12-31');
+    assert.throws(() => v('2026-01-02', '2026-01-01'), /future/i);
+  });
+
+  test('"today" is the local day of now, not UTC', () => {
+    const lateNight = new Date(2026, 9, 14, 23, 50).getTime();
+    assert.equal(E.validatePost({ platform: 'youtube', date: '2026-10-14' }, cfg, lateNight).loggedOn, '2026-10-14');
+    assert.throws(() => E.validatePost({ platform: 'youtube', date: '2026-10-15' }, cfg, lateNight), /future/i);
+  });
+
+  test('views: whole numbers 0 to max only', () => {
+    assert.equal(ok({ views: 0 }).views, 0);
+    assert.equal(ok({ views: '0' }).views, 0);
+    assert.equal(ok({ views: cfg.posts.max_views }).views, cfg.posts.max_views);
+    for (const views of [-1, '-1', 1.5, '1.5', '1e3', 'abc', '1,000', NaN, Infinity, cfg.posts.max_views + 1, true, [5], {}]) bad({ platform: 'youtube', date: MON, views }, /views/i);
+  });
+
+  test('validatePost does not touch its input', () => {
+    const input = Object.freeze({ platform: ' Instagram', date: WED, format: ' t ', note: ' n ' });
+    const out = E.validatePost(input, cfg, now);
+    assert.equal(input.note, ' n ');
+    assert.equal(out.note, 'n');
+  });
+
+  test('config drives the lists and caps', () => {
+    const c = structuredClone(cfg);
+    c.posts.platforms = ['instagram'];
+    c.posts.max_views = 100;
+    assert.throws(() => E.validatePost({ platform: 'youtube', date: MON }, c, now), /platform/i);
+    assert.throws(() => E.validatePost({ platform: 'instagram', date: MON, views: 101 }, c, now), /100/);
+  });
+
+  test('setPostViews adds and updates views, rejects bad input, leaves the ledger alone', () => {
+    const s = freshState();
+    const p = ok({});
+    s.posts.push(p);
+    E.setPostViews(p, '2500', cfg, now + 1000);
+    assert.equal(p.views, 2500);
+    assert.equal(p.viewsUpdatedAt, new Date(now + 1000).toISOString());
+    E.setPostViews(p, 0, cfg, now);
+    assert.equal(p.views, 0);
+    for (const v of ['', null, undefined, '-3', 'x', 1.2, cfg.posts.max_views + 1]) assert.throws(() => E.setPostViews(p, v, cfg, now), /view/i);
+    assert.equal(p.views, 0, 'failed update leaves the old value');
+    assert.equal(s.ledger.length, 0);
+  });
+
+  test('setPostPlatform fills in a migrated post', () => {
+    const p = { platform: null };
+    assert.equal(E.setPostPlatform(p, 'YouTube', cfg).platform, 'youtube');
+    assert.throws(() => E.setPostPlatform(p, 'tiktok', cfg), /platform/i);
+  });
+
+  test('a manual post with 2,000,000 views gives no XP, streak, tier or ledger row', () => {
+    const s = freshState();
+    s.posts.push(E.validatePost({ platform: 'instagram', date: WED, format: 'Reel', views: 2000000 }, cfg, now));
+    assert.equal(E.totalXP(s), 0);
+    assert.equal(s.ledger.length, 0);
+    assert.equal(E.tier(s, cfg).current.id, 'starter');
+    assert.equal(E.dailyStreak(s, cfg, now).current, 0);
+    assert.equal(E.weeklyXP(s, now), 0);
+    assert.equal(E.league(s, cfg, now).members.find(m => m.you).xp, 0);
+  });
+
+  test('postsInWeek: Monday to Sunday inclusive, by the date posted', () => {
+    const day = d => ({ date: d });
+    const s = freshState();
+    s.posts = ['2026-10-11', '2026-10-12', '2026-10-14', '2026-10-18', '2026-10-19'].map(day);
+    assert.deepEqual(E.postsInWeek(s, now).map(p => p.date), ['2026-10-12', '2026-10-14', '2026-10-18']);
+    assert.equal(E.postsInWeek(s, at('2026-10-18', 23)).length, 3, 'Sunday night is still the same week');
+    assert.equal(E.postsInWeek(s, at('2026-10-19', 0)).length, 1, 'Monday starts a new week');
+    assert.equal(E.postsInWeek(freshState(), now).length, 0);
+    assert.equal(E.postsInWeek({}, now).length, 0);
+  });
+
+  test('migrate: a post for each posted idea, once, with the date it was posted', () => {
+    const s = freshState();
+    s.v = 1;
+    s.ideas = [
+      { id: 'a', stage: 'posted', created_at: '2026-10-01T10:00:00.000Z', history: [{ stage: 'idea', at: '2026-10-01T10:00:00.000Z' }, { stage: 'posted', at: new Date(2026, 9, 10, 12).toISOString() }] },
+      { id: 'b', stage: 'filmed', history: [] },
+      { id: 'c', stage: 'posted', history: [{ stage: 'posted', at: new Date(2026, 9, 11, 12).toISOString() }] }
+    ];
+    s.posts = [{ id: 'old', ideaId: 'c', date: '2026-10-11', platform: 'youtube', source: 'manual' }];
+    E.migrate(s);
+    assert.equal(s.v, 2);
+    assert.equal(s.posts.length, 2);
+    const made = s.posts.find(p => p.ideaId === 'a');
+    assert.deepEqual({ ...made, id: undefined }, { id: undefined, ideaId: 'a', date: '2026-10-10', platform: null, format: '', views: null, viewsUpdatedAt: null, note: '', source: 'manual', verified: false, loggedOn: '2026-10-10' });
+    const snap = JSON.stringify(s);
+    E.migrate(s);
+    assert.equal(JSON.stringify(s), snap, 'idempotent');
+    assert.equal(E.totalXP(s), 0);
+  });
+
+  test('migrate tolerates old state with no posts array', () => {
+    const s = { ideas: [], ledger: [] };
+    E.migrate(s);
+    assert.deepEqual(s.posts, []);
+    assert.equal(s.v, 2);
+  });
+});
+
+describe("what's working (postInsights)", () => {
+  const TODAY = '2026-10-14', now = at(TODAY);
+  const post = (daysAgo, platform, format, views) => ({ date: E.addDays(TODAY, -daysAgo), platform, format, views });
+  const run = posts => E.postInsights({ ...freshState(), posts }, cfg, now);
+
+  test('median per platform and format, sorted by median desc', () => {
+    const r = run([post(1, 'instagram', 'Reel', 100), post(2, 'instagram', 'Reel', 300), post(3, 'instagram', 'Reel', 200), post(1, 'youtube', 'Short', 900), post(2, 'youtube', 'Short', 1100)]);
+    assert.deepEqual(r.groups.map(g => [g.platform, g.format, g.posts, g.median]), [['youtube', 'Short', 2, 1000], ['instagram', 'Reel', 3, 200]]);
+  });
+
+  test('window edges: last window_days days including today; older and future posts ignored', () => {
+    const edge = cfg.insights.window_days - 1;
+    const r = run([post(edge, 'instagram', 'Reel', 10), post(0, 'instagram', 'Reel', 20), post(edge + 1, 'instagram', 'Reel', 5000), post(-1, 'instagram', 'Reel', 7000)]);
+    assert.equal(r.groups.length, 1);
+    assert.equal(r.groups[0].posts, 2);
+    assert.equal(r.groups[0].median, 15);
+    assert.equal(r.best.views, 20);
+  });
+
+  test('window follows config', () => {
+    const c = structuredClone(cfg);
+    c.insights.window_days = 3;
+    const r = E.postInsights({ posts: [post(2, 'instagram', 'Reel', 10), post(3, 'instagram', 'Reel', 30), post(0, 'instagram', 'Reel', 20)] }, c, now);
+    assert.equal(r.groups[0].posts, 2);
+  });
+
+  test('posts without a numeric view count are ignored', () => {
+    const r = run([post(1, 'instagram', 'Reel', null), post(1, 'instagram', 'Reel', undefined), post(1, 'instagram', 'Reel', '500'), post(2, 'instagram', 'Reel', 40), post(3, 'instagram', 'Reel', 60)]);
+    assert.deepEqual(r.groups.map(g => [g.posts, g.median]), [[2, 50]]);
+    assert.deepEqual(run([post(1, 'instagram', 'Reel', null)]), { groups: [], best: null, windowDays: cfg.insights.window_days });
+  });
+
+  test('groups smaller than min_posts_per_format are dropped but can still be the best post', () => {
+    const r = run([post(1, 'instagram', 'Reel', 5000), post(1, 'youtube', 'Short', 10), post(2, 'youtube', 'Short', 20)]);
+    assert.deepEqual(r.groups.map(g => g.format), ['Short']);
+    assert.equal(r.best.views, 5000);
+    const c = structuredClone(cfg);
+    c.insights.min_posts_per_format = 1;
+    assert.equal(E.postInsights({ posts: [post(1, 'instagram', 'Reel', 5)] }, c, now).groups.length, 1);
+  });
+
+  test('even-count median rounds half up', () => {
+    assert.equal(run([post(1, 'instagram', 'Reel', 1), post(2, 'instagram', 'Reel', 2)]).groups[0].median, 2);
+    assert.equal(run([post(1, 'instagram', 'Reel', 10), post(2, 'instagram', 'Reel', 20), post(3, 'instagram', 'Reel', 30), post(4, 'instagram', 'Reel', 41)]).groups[0].median, 25);
+  });
+
+  test('ties sort by post count, then key', () => {
+    const r = run([
+      post(1, 'youtube', 'Video', 100), post(2, 'youtube', 'Video', 100),
+      post(1, 'instagram', 'Reel', 100), post(2, 'instagram', 'Reel', 100), post(3, 'instagram', 'Reel', 100),
+      post(1, 'instagram', 'Carousel', 100), post(2, 'instagram', 'Carousel', 100)
+    ]);
+    assert.deepEqual(r.groups.map(g => g.key), ['instagram|reel', 'instagram|carousel', 'youtube|video']);
+  });
+
+  test('format casing groups together; unknown platforms are skipped; no format is its own group', () => {
+    const r = run([post(1, 'instagram', 'Reel', 10), post(2, 'instagram', 'reel', 30), post(1, 'tiktok', 'Reel', 999), post(1, 'youtube', '', 5), post(2, 'youtube', '', 7)]);
+    assert.deepEqual(r.groups.map(g => [g.key, g.posts]), [['instagram|reel', 2], ['youtube|', 2]]);
+    assert.equal(r.best.views, 30);
+  });
+
+  test('best post is the highest views; ties go to the most recent', () => {
+    const r = run([post(5, 'instagram', 'Reel', 900), post(1, 'youtube', 'Short', 900), post(2, 'youtube', 'Short', 100)]);
+    assert.equal(r.best.platform, 'youtube');
+    assert.equal(r.best.date, E.addDays(TODAY, -1));
+  });
+
+  test('no posts', () => {
+    assert.deepEqual(run([]), { groups: [], best: null, windowDays: cfg.insights.window_days });
+  });
+});
+
+describe('48-hour views prompt (postNeedingViews)', () => {
+  const now = at('2026-10-15');
+  const post = (id, date, over) => ({ id, date, platform: 'instagram', format: 'Reel', views: null, source: 'manual', verified: false, ...over });
+  const pick = (posts, c = cfg, t = now) => E.postNeedingViews({ ...freshState(), posts }, c, t);
+
+  test('picks the oldest manual post at least views_prompt_after_days old with no views', () => {
+    assert.equal(cfg.insights.views_prompt_after_days, 2);
+    assert.equal(pick([post('a', '2026-10-14'), post('b', '2026-10-13'), post('c', '2026-10-10'), post('d', '2026-10-09')]).id, 'd');
+  });
+
+  test('boundary: exactly two days old counts, one day old does not', () => {
+    assert.equal(pick([post('a', '2026-10-13')]).id, 'a');
+    assert.equal(pick([post('a', '2026-10-14'), post('b', '2026-10-15')]), null);
+  });
+
+  test('skips posts that already have views (zero counts as an answer), verified posts and bad dates', () => {
+    assert.equal(pick([post('a', '2026-10-01', { views: 0 }), post('b', '2026-10-01', { views: 50 }), post('c', '2026-10-01', { verified: true }), post('d', '2026-10-01', { date: 'nope' })]), null);
+  });
+
+  test('works for migrated posts with no platform, and follows config', () => {
+    assert.equal(pick([post('a', '2026-10-13', { platform: null })]).id, 'a');
+    const c = structuredClone(cfg);
+    c.insights.views_prompt_after_days = 5;
+    assert.equal(pick([post('a', '2026-10-13')], c), null);
+    assert.equal(pick([post('a', '2026-10-10')], c).id, 'a');
+  });
+
+  test('empty or missing posts', () => {
+    assert.equal(pick([]), null);
+    assert.equal(E.postNeedingViews({}, cfg, now), null);
+  });
+
+  test('answering it with setPostViews clears the prompt without touching XP', () => {
+    const s = { ...freshState(), posts: [post('a', '2026-10-12')] };
+    E.setPostViews(E.postNeedingViews(s, cfg, now), 900, cfg, now);
+    assert.equal(E.postNeedingViews(s, cfg, now), null);
+    assert.equal(s.ledger.length, 0);
   });
 });

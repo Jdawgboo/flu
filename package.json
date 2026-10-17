@@ -1,6 +1,6 @@
 {
   "name": "lockin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "LockIn creator growth app, Phase 1 PWA prototype",
   "type": "module",

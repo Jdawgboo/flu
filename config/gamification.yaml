@@ -68,3 +68,21 @@ notifications:
   quiet_start: "22:00"
   quiet_end: "08:00"
   streak_risk_hours_before_midnight: 2
+
+# Self-reported posts: logged by hand, never worth XP, streak days, league XP or tiers.
+posts:
+  platforms: [instagram, youtube]
+  formats: [Reel, Short, Story, Video, Carousel, Post]
+  format_max: 40
+  note_max: 280
+  max_views: 1000000000
+
+# "What's working" and the coach's post nudges, all from the creator's own self-reported posts.
+insights:
+  window_days: 28
+  min_posts_per_format: 2
+  standout_ratio: 1.5
+  post_gap_nudge_days: 3
+  pace_tolerance: 0.5            # nudge when posts so far trail the even pace by more than this
+  pace_days_left: 4              # ...and this many days or fewer remain in the week, today included
+  views_prompt_after_days: 2     # ask for views on a manual post this many days after it went out

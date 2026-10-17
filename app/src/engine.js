@@ -244,6 +244,127 @@
     return isQuietAt(cfg, profile, at) ? quietWindow(cfg, profile).end : at;
   }
 
+  // ---------- self-reported posts ----------
+  // Posts the creator logs by hand. They never write ledger rows, so they give no XP, streak
+  // days, league XP or tiers; tier() only counts verified posts from the platform connectors.
+
+  function isRealDay(day) {
+    if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+    const [y, m, d] = day.split('-').map(Number);
+    const t = new Date(y, m - 1, d, 12);
+    return t.getFullYear() === y && t.getMonth() === m - 1 && t.getDate() === d;
+  }
+
+  function cleanText(v, max) { return String(v == null ? '' : v).trim().slice(0, max).trim(); }
+
+  // Whole number from a number or a string of digits; anything else is rejected.
+  function parseViews(raw, cfg) {
+    const max = cfg.posts.max_views;
+    const msg = 'Views must be a whole number between 0 and ' + max;
+    const v = typeof raw === 'string' ? raw.trim() : raw;
+    let n;
+    if (typeof v === 'number') n = v;
+    else if (typeof v === 'string' && /^\d+$/.test(v)) n = Number(v);
+    else throw new Error(msg);
+    if (!Number.isInteger(n) || n < 0 || n > max) throw new Error(msg);
+    return n;
+  }
+
+  function normPlatform(raw, cfg) {
+    const p = typeof raw === 'string' ? raw.trim().toLowerCase() : raw;
+    if (!cfg.posts.platforms.includes(p)) throw new Error('Pick the platform you posted on: ' + cfg.posts.platforms.join(' or '));
+    return p;
+  }
+
+  /* Validate a hand-logged post and return it, ready to push onto state.posts. Throws an
+   * Error whose message is fit to show the user. input: { platform, date, format, views, note, ideaId } */
+  function validatePost(input, cfg, now) {
+    input = input || {};
+    const t = now == null ? Date.now() : now;
+    const today = localDay(t);
+    const platform = normPlatform(input.platform, cfg);
+    if (!isRealDay(input.date)) throw new Error('Enter the date you posted (YYYY-MM-DD).');
+    if (input.date > today) throw new Error('Date cannot be in the future.');
+    const raw = typeof input.views === 'string' ? input.views.trim() : input.views;
+    const hasViews = raw !== undefined && raw !== null && raw !== '';
+    return {
+      id: uid('post'), ideaId: input.ideaId || null, date: input.date, platform,
+      format: cleanText(input.format, cfg.posts.format_max),
+      views: hasViews ? parseViews(raw, cfg) : null,
+      viewsUpdatedAt: hasViews ? new Date(t).toISOString() : null,
+      note: cleanText(input.note, cfg.posts.note_max),
+      source: 'manual', verified: false, loggedOn: today
+    };
+  }
+
+  // Add or update the view count on a logged post. Never touches the ledger.
+  function setPostViews(post, views, cfg, now) {
+    const raw = typeof views === 'string' ? views.trim() : views;
+    if (raw === undefined || raw === null || raw === '') throw new Error('Enter the view count.');
+    post.views = parseViews(raw, cfg);
+    post.viewsUpdatedAt = new Date(now == null ? Date.now() : now).toISOString();
+    return post;
+  }
+
+  function setPostPlatform(post, platform, cfg) {
+    post.platform = normPlatform(platform, cfg);
+    return post;
+  }
+
+  // Posts whose date falls in the Monday-to-Sunday week containing `now`.
+  function postsInWeek(state, now) {
+    const start = weekStart(now == null ? Date.now() : now), end = addDays(start, 6);
+    return (state.posts || []).filter(p => isRealDay(p.date) && p.date >= start && p.date <= end);
+  }
+
+  // Oldest hand-logged post that went out long enough ago to ask about and still has no view count.
+  function postNeedingViews(state, cfg, now) {
+    const cutoff = addDays(localDay(now == null ? Date.now() : now), -cfg.insights.views_prompt_after_days);
+    return (state.posts || []).filter(p => p.source === 'manual' && !p.verified && p.views == null && isRealDay(p.date) && p.date <= cutoff)
+      .sort((a, b) => a.date.localeCompare(b.date))[0] || null;
+  }
+
+  /* Bring older saved state up to the current shape. Safe to run any number of times.
+   * v2: every idea marked posted gets a hand-logged post (platform unknown) to count. */
+  function migrate(state) {
+    if (!Array.isArray(state.posts)) state.posts = [];
+    (state.ideas || []).forEach(idea => {
+      if (idea.stage !== 'posted' || state.posts.some(p => p.ideaId === idea.id)) return;
+      const h = (idea.history || []).find(x => x.stage === 'posted');
+      const when = (h && h.at) || idea.created_at || new Date().toISOString();
+      state.posts.push({
+        id: uid('post'), ideaId: idea.id, date: localDay(when), platform: null, format: '', views: null,
+        viewsUpdatedAt: null, note: '', source: 'manual', verified: false, loggedOn: localDay(when)
+      });
+    });
+    state.v = Math.max(state.v || 0, 2);
+    return state;
+  }
+
+  /* Median views per platform and format over the last cfg.insights.window_days days, for
+   * groups with enough posts that have a view count, plus the single best post. */
+  function postInsights(state, cfg, now) {
+    const I = cfg.insights;
+    const today = localDay(now == null ? Date.now() : now);
+    const from = addDays(today, -(I.window_days - 1));
+    const groups = {};
+    let best = null;
+    (state.posts || []).forEach(p => {
+      if (!p || !cfg.posts.platforms.includes(p.platform) || typeof p.views !== 'number' || !isFinite(p.views)) return;
+      if (!isRealDay(p.date) || p.date < from || p.date > today) return;
+      const format = String(p.format || '');
+      const key = p.platform + '|' + format.toLowerCase();
+      (groups[key] = groups[key] || { key, platform: p.platform, format, views: [] }).views.push(p.views);
+      if (!best || p.views > best.views || (p.views === best.views && p.date >= best.date)) best = p;
+    });
+    const list = Object.keys(groups).map(k => groups[k]).filter(g => g.views.length >= I.min_posts_per_format).map(g => {
+      const v = g.views.slice().sort((a, b) => a - b), m = v.length >> 1;
+      const median = v.length % 2 ? v[m] : Math.round((v[m - 1] + v[m]) / 2);
+      return { key: g.key, platform: g.platform, format: g.format, posts: v.length, median };
+    }).sort((a, b) => b.median - a.median || b.posts - a.posts || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    return { groups: list, best: best ? { platform: best.platform, format: best.format, date: best.date, views: best.views, ideaId: best.ideaId || null } : null, windowDays: I.window_days };
+  }
+
   // ---------- skills, tiers, badges ----------
 
   // Reps that earned nothing for these reasons don't train skills either.
@@ -350,6 +471,6 @@
   return {
     localDay, addDays, weekStart, uid, tokens, cosine, isDuplicateIdea, isRepeatRep,
     award, reverse, isReversed, totalXP, weeklyXP, xpBetween, practiceXPOn, levelFor,
-    dailyStreak, hoursLeftToday, toMinutes, minutesOfDay, quietWindow, isQuietAt, isQuiet, streakRiskStart, reminderMinutes, skills, tier, badges, league, recentAverageScore
+    dailyStreak, hoursLeftToday, toMinutes, minutesOfDay, validatePost, setPostViews, setPostPlatform, postsInWeek, postNeedingViews, postInsights, migrate, quietWindow, isQuietAt, isQuiet, streakRiskStart, reminderMinutes, skills, tier, badges, league, recentAverageScore
   };
 });

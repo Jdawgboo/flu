@@ -27,7 +27,7 @@
 
   function fresh() {
     return {
-      v: 1, profile: null, ob: { step: 'welcome', data: {} },
+      v: 2, profile: null, ob: { step: 'welcome', data: {} },
       ledger: [], reps: [], ideas: [], lessonsDone: [], chat: [], posts: [],
       notif: { day: '', count: 0, sent: {} }, seenLevel: 1, highestTier: 'starter', leagueIndex: 0
     };
@@ -37,7 +37,7 @@
     let raw = null;
     try { raw = localStorage.getItem(KEY); } catch (e) { raw = null; }
     if (!raw) raw = memory;
-    try { return raw ? Object.assign(fresh(), JSON.parse(raw)) : fresh(); } catch (e) { return fresh(); }
+    try { return raw ? E.migrate(Object.assign(fresh(), JSON.parse(raw))) : fresh(); } catch (e) { return fresh(); }
   }
 
   function save() {
@@ -47,7 +47,7 @@
   }
 
   let state = load();
-  const ui = { tab: 'home', view: null, draft: {}, filter: 'all', err: '', otpSent: false, modals: [], confirmDelete: false, exportText: null, exportCopied: false, ideaConfirm: null, listening: false };
+  const ui = { editPost: null, tab: 'home', view: null, draft: {}, filter: 'all', err: '', otpSent: false, modals: [], confirmDelete: false, exportText: null, exportCopied: false, ideaConfirm: null, listening: false };
 
   // ---------- helpers ----------
 
@@ -61,6 +61,8 @@
   const lang = () => (profile().language === 'hinglish' ? 'hi' : 'en');
   const streak = () => E.dailyStreak(state, cfg, now());
   const briefCtx = s => ({ today: E.localDay(now()), skills: E.skills(state, cfg), streak: s || streak(), gentleAfterDays: cfg.streaks.gentle_after_days });
+  const fmtNum = K.fmtNum;
+  const platformName = p => K.platformName(p);
   const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
 
   function obProfile() {
@@ -120,6 +122,9 @@
   // Queue the level-up and streak-milestone modals an action earned.
   function celebrate(before) {
     const after = snapshot();
+    // Tiers only go up; remember the highest one reached here, not while rendering.
+    const tr = E.tier(state, cfg), ids = cfg.tiers.map(t => t.id);
+    if (tr.index > ids.indexOf(state.highestTier || ids[0])) { state.highestTier = tr.current.id; save(); }
     if (after.level > (state.seenLevel || 1)) {
       ui.modals.push({ kind: 'level', level: after.level });
       state.seenLevel = after.level;
@@ -473,9 +478,12 @@
     return '';
   }
 
-  function postedThisWeek() {
-    const ws = E.weekStart(now());
-    return state.ideas.filter(i => i.history.some(h => h.stage === 'posted' && E.localDay(h.at) >= ws)).length;
+  function postedThisWeek() { return E.postsInWeek(state, now()).length; }
+
+  function postDayLabel(date) {
+    const [y, m, d] = date.split('-').map(Number);
+    const dt = new Date(y, m - 1, d, 12);
+    return E.addDays(date, 6) >= E.localDay(now()) ? dt.toLocaleDateString('en-IN', { weekday: 'long' }) : dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
   }
 
   function homeView() {
@@ -493,6 +501,8 @@
     const posted = postedThisWeek();
     const goal = p.weeklyGoal;
     const mins = Math.max(0, Math.floor(hoursLeft * 60));
+    const nudge = K.postNudge(p, { posts: state.posts, weekCount: posted, goal, insights: E.postInsights(state, cfg, now()), today: E.localDay(now()), cfg });
+    const due = E.postNeedingViews(state, cfg, now());
 
     return `<section class="screen">${topbar()}
       ${atRisk ? `<div class="card warn" role="alert"><div class="row"><span style="font-size:24px" aria-hidden="true">⏳</span><div class="grow"><h3>Your ${s.current}-day streak is at risk</h3>
@@ -519,7 +529,13 @@
       </div>
       <div class="card tight"><div class="row between"><h3>Weekly posting goal</h3><span class="num">${posted}/${goal}</span></div>
         <div class="bar gold"><i style="width:${Math.min(100, Math.round(posted / goal * 100))}%"></i></div>
-        <p class="small muted">${posted >= goal ? 'Goal hit this week. ' : ''}Self-reported from ideas you mark posted, until you connect Instagram or YouTube.</p></div>
+        ${nudge ? `<p class="small" id="post-nudge"><b>${esc(K.NAME)}:</b> ${esc(nudge)}</p>` : ''}
+        <p class="small muted">${posted >= goal ? 'Goal hit this week. ' : ''}Self-reported, so posts you log here earn no XP. Verified posting XP arrives when you connect Instagram or YouTube.</p>
+        <button class="btn soft sm" data-action="log-post-open">Log a post</button></div>
+      ${due ? `<div class="card tight" id="views-prompt"><h3>Your ${esc(due.format || 'post')} from ${esc(postDayLabel(due.date))}: how many views?</h3>
+        <div class="row"><input type="text" inputmode="numeric" autocomplete="off" maxlength="12" data-bind="nudgeViews" data-enter="prompt-views-save" data-id="${due.id}" value="${esc(draft('nudgeViews'))}" placeholder="e.g. 1840" aria-label="Views">
+          <button class="btn sm" data-action="prompt-views-save" data-id="${due.id}">Save</button></div>
+        <p class="small muted">Just for your own insights. It earns no XP.</p></div>` : ''}
     </section>`;
   }
 
@@ -632,6 +648,7 @@
     const v = ui.view;
     if (v.kind === 'rep') return repView(v);
     if (v.kind === 'feedback') return feedbackView(v);
+    if (v.kind === 'log-post') return logPostView(v);
     if (v.kind === 'lessons') return lessonsView();
     if (v.kind === 'lesson') return lessonView(v);
     ui.view = null;
@@ -640,6 +657,31 @@
 
   function backBar(title) {
     return `<div class="topbar"><button class="btn ghost sm" data-action="back">← Back</button><span class="label">${esc(title || '')}</span><span style="width:60px"></span></div>`;
+  }
+
+  function logPostView(v) {
+    const idea = v.ideaId && state.ideas.find(i => i.id === v.ideaId);
+    const fmt = draft('postFormat'), plat = draft('postPlatform');
+    return `<section class="screen">${backBar('Log a post')}
+      <h1>${idea ? 'Mark posted' : 'Log a post'}</h1>
+      ${idea ? `<div class="card marigold tight"><span class="label">Your idea</span><p class="idea-text">${esc(idea.text)}</p></div>` : ''}
+      <p class="small muted">Self-reported. Logging a post earns no XP and does not change your tier. It counts toward your weekly goal and your own insights.</p>
+      <span class="label">Where did you post it?</span>
+      <div class="options">${cfg.posts.platforms.map(id => `<button class="opt" data-action="post-platform-pick" data-val="${id}" aria-pressed="${plat === id}"><b>${esc(platformName(id))}</b></button>`).join('')}</div>
+      <label class="field"><span>Date posted</span><input type="date" data-bind="postDate" max="${E.localDay(now())}" min="2000-01-01" value="${esc(draft('postDate'))}"></label>
+      <span class="label">Format (optional)</span>
+      <div class="row wrap" role="group" aria-label="Format">${cfg.posts.formats.map(f => `<button class="stage-tab" data-action="post-format" data-val="${esc(f)}" aria-pressed="${fmt === f}">${esc(f)}</button>`).join('')}</div>
+      <label class="field"><span>Views so far (optional)</span><input type="text" inputmode="numeric" autocomplete="off" maxlength="12" data-bind="postViews" value="${esc(draft('postViews'))}" placeholder="e.g. 1840"></label>
+      <label class="field"><span>Note (optional)</span><textarea rows="2" maxlength="${cfg.posts.note_max}" data-bind="postNote" placeholder="What was the post about?">${esc(draft('postNote'))}</textarea></label>
+      ${errLine()}
+      <button class="btn block" data-action="post-save">Save post</button>
+    </section>`;
+  }
+
+  function openLogPost(ideaId) {
+    ['postPlatform', 'postFormat', 'postViews', 'postNote'].forEach(k => { delete ui.draft[k]; });
+    ui.draft.postDate = E.localDay(now());
+    go({ view: { kind: 'log-post', ideaId: ideaId || null } });
   }
 
   function weakHookFor(seed) {
@@ -798,7 +840,7 @@
 
   // ---------- coach ----------
 
-  const QUICK = ['How do I write a better hook?', 'What should I post today?', 'My views are low', 'When should I post?', 'How do brand deals work?', 'Can I buy followers?'];
+  const QUICK = ['How do I write a better hook?', 'What should I post today?', "What's working?", 'My views are low', 'When should I post?', 'How do brand deals work?', 'Can I buy followers?'];
 
   function coachView() {
     if (!state.chat.length) { state.chat.push({ from: 'coach', text: K.chat(state.profile, 'hi'), at: iso(now()) }); save(); }
@@ -817,7 +859,7 @@
     if (!text) return;
     const t = iso(now());
     state.chat.push({ from: 'me', text, at: t });
-    state.chat.push({ from: 'coach', text: K.chat(state.profile, text), at: t });
+    state.chat.push({ from: 'coach', text: K.chat(state.profile, text, { insights: E.postInsights(state, cfg, now()), cfg }), at: t });
     if (state.chat.length > 200) state.chat = state.chat.slice(-200);
     ui.draft.chatText = '';
     save();
@@ -843,7 +885,6 @@
     const L = E.levelFor(xp, cfg);
     const s = streak();
     const tr = E.tier(state, cfg);
-    if (tr.current.id !== state.highestTier && tr.index > ['starter', 'poster', 'consistent', 'rising', 'breakout', 'gig_ready'].indexOf(state.highestTier)) { state.highestTier = tr.current.id; save(); }
     const sk = E.skills(state, cfg);
     const bd = E.badges(state, cfg, now());
     const labels = K.SKILL_LABEL[lang()];
@@ -883,12 +924,55 @@
         <p class="small muted">Reach Gig-ready: ${esc(cfg.tiers[cfg.tiers.length - 1].rule)}.</p>
       </div>
 
+      ${postsCard()}
+      ${insightsCard()}
+
       <div class="card"><h2>XP history</h2>
         ${hist.length ? `<div class="list">${hist.map(e => `<div class="li small"><div class="grow"><b>${esc(REASON[e.reason] || e.reason)}</b>${e.notes.length ? ` <span class="muted">· ${e.notes.map(n => NOTE_SHORT[n] || n).join(', ')}</span>` : ''}${E.isReversed(state, e.id) ? ' <span class="muted">· reversed</span>' : ''}<div class="muted">${esc(fmtDate(e.created_at))}</div></div><span class="num" style="font-weight:700;color:${e.amount > 0 ? 'var(--good)' : e.amount < 0 ? 'var(--bad)' : 'var(--muted)'}">${e.amount > 0 ? '+' : ''}${e.amount}</span></div>`).join('')}</div>` : '<p class="muted small">No XP yet.</p>'}
       </div>
 
       ${settingsCard()}
     </section>`;
+  }
+
+  // Most recent first: by date posted, then by when it was logged.
+  function recentPosts(limit) {
+    return state.posts.map((p, i) => ({ p, i }))
+      .sort((a, b) => b.p.date.localeCompare(a.p.date) || (b.p.loggedOn || '').localeCompare(a.p.loggedOn || '') || b.i - a.i)
+      .slice(0, limit).map(x => x.p);
+  }
+
+  function postRow(p) {
+    const editing = ui.editPost === p.id;
+    const title = p.platform
+      ? `<b>${esc(platformName(p.platform))}${p.format ? ' · ' + esc(p.format) : ''}</b>`
+      : `<b>Add platform</b> <span class="row wrap" style="display:inline-flex;gap:6px">${cfg.posts.platforms.map(id => `<button class="btn soft sm" data-action="post-set-platform" data-id="${p.id}" data-val="${id}">${esc(platformName(id))}</button>`).join('')}</span>`;
+    const views = p.views != null ? `<span class="num">${fmtNum(p.views)}</span> views` : 'No views added';
+    return `<div class="li small" data-post="${p.id}"><div class="grow stack" style="gap:4px">
+        <div>${title} <span class="muted">· ${esc(postDayLabel(p.date))}</span></div>
+        <div class="muted">${views}</div>
+        ${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}
+        ${editing ? `<div class="row"><input type="text" inputmode="numeric" autocomplete="off" maxlength="12" data-bind="postViewsEdit" data-enter="post-views-save" data-id="${p.id}" value="${esc(draft('postViewsEdit'))}" placeholder="Views" aria-label="Views"><button class="btn sm" data-action="post-views-save" data-id="${p.id}">Save</button><button class="btn ghost sm" data-action="post-views-cancel">Cancel</button></div>` : ''}
+      </div>${editing ? '' : `<button class="btn soft sm" data-action="post-views-edit" data-id="${p.id}">${p.views != null ? 'Update' : 'Add'} views</button>`}</div>`;
+  }
+
+  function postsCard() {
+    const list = recentPosts(10);
+    return `<div class="card" id="your-posts"><div class="row between"><h2>Your posts</h2><button class="linkbtn" data-action="log-post-open">Log a post</button></div>
+      <p class="small muted">Self-reported by you. Posts here earn no XP and do not change your tier.</p>
+      ${list.length ? `<div class="list">${list.map(postRow).join('')}</div>` : '<p class="muted small">No posts logged yet. Mark an idea posted, or log one from Home.</p>'}
+    </div>`;
+  }
+
+  function insightsCard() {
+    const ins = E.postInsights(state, cfg, now());
+    const name = (platform, format, fallback) => `${platformName(platform)}${format ? ' · ' + format : fallback ? ' · ' + fallback : ''}`;
+    return `<div class="card" id="whats-working"><h2>What's working</h2>
+      ${ins.groups.length ? `<div class="list">${ins.groups.map(g => `<div class="li small"><span class="grow">${esc(name(g.platform, g.format, 'posts'))}: median <span class="num">${fmtNum(g.median)}</span> views (${plural(g.posts, 'post')})</span></div>`).join('')}</div>`
+        : `<p class="muted small">Log at least ${cfg.insights.min_posts_per_format} posts of the same format with their views, from the last ${cfg.insights.window_days} days, and we will show what works for you.</p>`}
+      ${ins.best ? `<p class="small"><b>Your best:</b> ${esc(platformName(ins.best.platform))}${ins.best.format ? ' ' + esc(ins.best.format) : ''}, <span class="num">${fmtNum(ins.best.views)}</span> views</p>` : ''}
+      <p class="small muted">Self-reported. Compared only with your own posts.</p>
+    </div>`;
   }
 
   function notifStatus() {
@@ -927,7 +1011,7 @@
         ? `<div class="card warn"><h3>Delete your account?</h3><p class="small">This permanently erases your profile, ideas, reps, XP and chat from this device. It cannot be undone.</p>
             <div class="row"><button class="btn ghost grow" data-action="delete-cancel">Cancel</button><button class="btn danger grow" data-action="delete-yes">Yes, delete everything</button></div></div>`
         : '<button class="btn danger block" data-action="delete">Delete account</button>'}
-      <p class="small muted">LockIn prototype · Phase 1. Grading is rule-based on this device.</p>
+      <p class="small muted">LockIn prototype · Phase 1. Grading is rule-based on this device. Build <span class="num" id="build">${esc(window.LI_BUILD || 'dev')}</span></p>
     </div>`;
   }
 
@@ -1047,6 +1131,11 @@
     // Pipeline progress
     dosa.hook = 'This ₹80 dosa in Koramangala beats every ₹400 brunch I have had';
     [['hook', 5, 18], ['script', 4, 20], ['filmed', 2, 17], ['posted', 1, 12]].forEach(([s, d, h]) => moveStage(dosa, s, at(d, h)));
+    const logPost = (ideaId, platform, format, views, daysAgo, h) => st.posts.push(E.validatePost({ ideaId, platform, format, views, date: E.localDay(at(daysAgo, h)) }, cfg, at(daysAgo, h)));
+    logPost(dosa.id, 'instagram', 'Reel', 1840, 1, 12);
+    logPost(null, 'youtube', 'Short', 410, 5, 17);
+    logPost(null, 'instagram', 'Reel', 2650, 8, 13);
+    logPost(null, 'instagram', 'Reel', 920, 12, 19);
     coffee.hook = 'I tried 5 filter coffees in Bangalore. Only one was worth ₹100.';
     [['hook', 4, 10], ['script', 3, 11], ['filmed', 1, 16]].forEach(([s, d, h]) => moveStage(coffee, s, at(d, h)));
     moveStage(biryani, 'hook', at(3, 19)); moveStage(biryani, 'script', at(3, 20));
@@ -1066,6 +1155,16 @@
   }
 
   // ---------- actions ----------
+
+  // Add or update the view count on a logged post. Self-reported, so no XP and no ledger row.
+  function saveViews(id, raw, done) {
+    const post = state.posts.find(x => x.id === id);
+    if (!post) return;
+    try { E.setPostViews(post, String(raw).replace(/[,\s]/g, ''), cfg, now()); } catch (err) { toast(err.message); return; }
+    done();
+    save(); render();
+    toast('Views saved');
+  }
 
   const actions = {
     'ob-start': () => obGo('signin'),
@@ -1201,14 +1300,46 @@
     'idea-rep': el => { ui.tab = 'ideas'; openRep(el.dataset.type, { ideaId: el.dataset.id }); },
     'idea-stage': el => {
       const idea = state.ideas.find(i => i.id === el.dataset.id);
+      if (el.dataset.stage === 'posted') {
+        // Posting is self-reported: say where and when, then the post is logged and the idea moves on.
+        if (idea && STAGES.indexOf(idea.stage) < STAGES.indexOf('posted')) openLogPost(idea.id);
+        return;
+      }
       if (!idea || !moveStage(idea, el.dataset.stage, now())) return;
       save();
       render();
-      if (el.dataset.stage === 'posted') {
-        const p = postedThisWeek();
-        toast(p === state.profile.weeklyGoal ? 'Weekly posting goal hit! 🎉' : `Marked posted. ${p}/${state.profile.weeklyGoal} this week`);
-      } else toast('Marked filmed 🎬');
+      toast('Marked filmed 🎬');
     },
+    'log-post-open': () => openLogPost(null),
+    'post-platform-pick': el => { ui.draft.postPlatform = el.dataset.val; ui.err = ''; render(); },
+    'post-format': el => { ui.draft.postFormat = draft('postFormat') === el.dataset.val ? '' : el.dataset.val; render(); },
+    'post-save': () => {
+      const v = ui.view, t = now();
+      let post;
+      try {
+        post = E.validatePost({
+          ideaId: v.ideaId, platform: draft('postPlatform'), date: draft('postDate'), format: draft('postFormat'),
+          views: String(draft('postViews')).replace(/[,\s]/g, ''), note: draft('postNote')
+        }, cfg, t);
+      } catch (err) { ui.err = err.message; render(); return; }
+      state.posts.push(post);
+      const idea = v.ideaId && state.ideas.find(i => i.id === v.ideaId);
+      if (idea) moveStage(idea, 'posted', t);
+      save();
+      go({ view: null });
+      const n = postedThisWeek(), goal = state.profile.weeklyGoal;
+      toast(n >= goal ? 'Weekly posting goal hit! 🎉' : `Post logged. ${n}/${goal} this week`);
+    },
+    'post-set-platform': el => {
+      const post = state.posts.find(x => x.id === el.dataset.id);
+      if (!post) return;
+      E.setPostPlatform(post, el.dataset.val, cfg);
+      save(); render();
+    },
+    'post-views-edit': el => { ui.editPost = el.dataset.id; const post = state.posts.find(x => x.id === el.dataset.id); ui.draft.postViewsEdit = post && post.views != null ? String(post.views) : ''; render(); },
+    'post-views-cancel': () => { ui.editPost = null; render(); },
+    'post-views-save': el => saveViews(el.dataset.id, draft('postViewsEdit'), () => { ui.editPost = null; }),
+    'prompt-views-save': el => saveViews(el.dataset.id, draft('nudgeViews'), () => { delete ui.draft.nudgeViews; }),
     'idea-remove': el => { ui.ideaConfirm = el.dataset.id; render(); const d = document.querySelector(`[data-idea="${el.dataset.id}"] details`); if (d) d.open = true; },
     'idea-remove-no': () => { ui.ideaConfirm = null; render(); },
     'idea-remove-yes': el => {

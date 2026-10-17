@@ -245,6 +245,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--brand); outline:
 .tab svg { width: 24px; height: 24px; }
 .tab[aria-current="page"] { color: var(--brand); }
 
+/* update-ready toast (index.html) */
+.update-toast { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: 12px; background: var(--ink); color: var(--bg); padding: 8px 8px 8px 16px; border-radius: 99px; font-weight: 700; box-shadow: var(--shadow); max-width: calc(100% - 32px); }
+.update-toast button { background: var(--bg); color: var(--ink); border: 0; border-radius: 99px; padding: 8px 14px; font-weight: 700; min-height: 36px; }
+
 /* toast + celebration */
 .toast { position: fixed; left: 50%; top: calc(16px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); z-index: 50; background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 99px; font-weight: 700; box-shadow: var(--shadow); animation: drop .35s ease; max-width: calc(100% - 32px); text-align: center; }
 .xpburst { position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%); z-index: 50; font-family: var(--font-display); font-weight: 800; font-size: 44px; color: var(--marigold); text-shadow: 0 2px 0 var(--marigold-ink); pointer-events: none; animation: burst 1.3s ease forwards; }

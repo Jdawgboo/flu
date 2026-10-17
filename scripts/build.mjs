@@ -13,7 +13,14 @@ const SCRIPTS = ['src/content.js', 'src/engine.js', 'src/grader.js', 'src/coach.
 const ASSETS = ['index.html', 'styles.css', 'manifest.webmanifest', 'icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', ...SCRIPTS];
 
 const config = yaml.load(await readFile(new URL('config/gamification.yaml', root), 'utf8'));
-const configJs = `window.LI_CONFIG = ${JSON.stringify(config, null, 2)};\n`;
+const baseConfigJs = `window.LI_CONFIG = ${JSON.stringify(config, null, 2)};\n`;
+
+// Version the offline cache by the content it serves; the same hash is shown in Settings as the build.
+const hash = createHash('sha256');
+hash.update(baseConfigJs);
+for (const f of ASSETS) hash.update(await readFile(new URL(f, app)));
+const version = hash.digest('hex').slice(0, 10);
+const configJs = baseConfigJs + `window.LI_BUILD = ${JSON.stringify(version)};\n`;
 
 await rm(dist, { recursive: true, force: true });
 await mkdir(new URL('src/', dist), { recursive: true });
@@ -21,11 +28,6 @@ await mkdir(new URL('icons/', dist), { recursive: true });
 for (const f of ASSETS) await cp(new URL(f, app), new URL(f, dist));
 await writeFile(new URL('config.js', dist), configJs);
 
-// Version the offline cache by the content it serves.
-const hash = createHash('sha256');
-hash.update(configJs);
-for (const f of ASSETS) hash.update(await readFile(new URL(f, app)));
-const version = hash.digest('hex').slice(0, 10);
 await writeFile(new URL('sw.js', dist), (await read('sw.js')).replaceAll('__VERSION__', version));
 
 // Single-file artifact: no doctype/html/head/body, no manifest, worker or icons.

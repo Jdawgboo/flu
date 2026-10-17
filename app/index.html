@@ -32,11 +32,28 @@
   <script src="src/coach.js"></script>
   <script src="src/app.js"></script>
   <script>
-    try {
-      if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-        navigator.serviceWorker.register('sw.js').catch(function () {});
-      }
-    } catch (e) {}
+    // Register the offline worker, and offer a reload when a newer build has taken over.
+    (function () {
+      try {
+        if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
+        var hadWorker = !!navigator.serviceWorker.controller;
+        var offer = function () {
+          if (document.getElementById('update-toast')) return;
+          var t = document.createElement('div');
+          t.id = 'update-toast'; t.className = 'update-toast'; t.setAttribute('role', 'status');
+          t.innerHTML = '<span>A new version is ready.</span><button type="button" id="update-reload">Reload</button>';
+          document.body.appendChild(t);
+          document.getElementById('update-reload').addEventListener('click', function () { location.reload(); });
+        };
+        navigator.serviceWorker.addEventListener('controllerchange', function () { if (hadWorker) offer(); });
+        navigator.serviceWorker.register('sw.js').then(function (reg) {
+          reg.addEventListener('updatefound', function () {
+            var w = reg.installing;
+            if (w) w.addEventListener('statechange', function () { if (w.state === 'installed' && navigator.serviceWorker.controller) offer(); });
+          });
+        }).catch(function () {});
+      } catch (e) {}
+    })();
   </script>
 </body>
 </html>

@@ -16,6 +16,10 @@
     hi: { hooks: 'Hooks', retention: 'Retention aur pacing', confidence: 'Camera confidence', editing: 'Editing', storytelling: 'Storytelling', niche: 'Niche aur consistency' }
   };
 
+  const PLATFORM_NAME = { instagram: 'Instagram', youtube: 'YouTube' };
+  const fmtNum = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const platformName = p => PLATFORM_NAME[p] || p || '';
+
   function L(profile) { return profile && profile.language === 'hinglish' ? 'hi' : 'en'; }
 
   // Skills you can practise in Phase 1, used to choose the daily focus.
@@ -65,10 +69,52 @@
     return line + xpLine;
   }
 
+  // ---------- post nudge: one line at most, from the creator's own self-reported posts ----------
+
+  function daysBetween(a, b) {
+    const t = d => { const [y, m, day] = d.split('-').map(Number); return Date.UTC(y, m - 1, day); };
+    return Math.round((t(b) - t(a)) / 86400000);
+  }
+
+  /* ctx: { posts, weekCount, goal, insights, today, cfg }. Returns the first rule that fits, or null. */
+  function postNudge(profile, ctx) {
+    const lang = L(profile);
+    const I = ctx.cfg.insights;
+    const posts = (ctx.posts || []).filter(p => p && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && p.date <= ctx.today);
+    if (!posts.length) return null;
+
+    const last = posts.reduce((m, p) => (p.date > m ? p.date : m), '');
+    const gap = daysBetween(last, ctx.today);
+    if (gap >= I.post_gap_nudge_days) {
+      return lang === 'hi' ? `${gap} din se koi post log nahi hui. Ek chhota sa post bhi chalega.` : `It has been ${gap} days since your last post. A small one still counts.`;
+    }
+
+    // Days left in the week, today included (Monday is 7, Sunday is 1).
+    const [y, m, d] = ctx.today.split('-').map(Number);
+    const dow = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+    const daysLeft = 7 - dow;
+    const expected = ctx.goal * (dow + 1) / 7;
+    if (ctx.weekCount < expected - I.pace_tolerance && daysLeft <= I.pace_days_left) {
+      return lang === 'hi' ? `Is hafte ${ctx.weekCount}/${ctx.goal} posts hui hain aur ${daysLeft} din bache hain. Aaj ek post nikaalo.` : `You are at ${ctx.weekCount}/${ctx.goal} this week with ${daysLeft} day${daysLeft === 1 ? '' : 's'} left. Aim to post today.`;
+    }
+
+    if (ctx.weekCount >= ctx.goal) {
+      return lang === 'hi' ? 'Weekly goal poora ho gaya. Ab bonus mein kuch naya try karo.' : 'Weekly goal hit. Try something new with the extra post.';
+    }
+
+    const g = (ctx.insights && ctx.insights.groups) || [];
+    if (g.length >= 2 && g[1].median > 0 && g[0].median >= I.standout_ratio * g[1].median) {
+      const name = `${platformName(g[0].platform)} ${g[0].format || 'posts'}`.trim();
+      return lang === 'hi' ? `Tumhare ${name} sabse zyada views la rahe hain (median ${fmtNum(g[0].median)}). Aur banao.` : `Your ${name} get the most views lately (median ${fmtNum(g[0].median)}). Make more of them.`;
+    }
+    return null;
+  }
+
   const INTENTS = [
     { re: /\b(buy|bought|purchase|fake|kharid)\w*\b.{0,24}\b(follower|view|like|subscriber|comment)|\bpaid (follower|view|like|subscriber)|\b(follower|view|like|subscriber)s?\b.{0,20}\b(buy|purchase|kharid|khareed)|follow ?(for|4) ?follow|\bf4f\b|\bl4l\b|engagement pods?|\bbots?\b/i, key: 'cheat' },
     { re: /\bhook|first line|opening|shuru/i, key: 'hook' },
     { re: /(no|low|less|kam|zero|not getting( any)?) (views|reach|likes)|(views|reach|likes) (are|is) (so )?(low|bad|dead|down)|views? (nahi|kam)|nobody (watches|sees)|flop/i, key: 'lowviews' },
+    { re: /what'?s working|what is working|\bviews?\b|\bstats?\b|analytics|performance|kya (chal|kaam)/i, key: 'stats' },
     { re: /\bwhen\b.*\bpost|best time|kab post|timing/i, key: 'time' },
     { re: /idea|what (should|to) (i )?post|kya post|topic/i, key: 'ideas' },
     { re: /(brand|deal|money|paid|earn|gig|collab|paisa|kamai)/i, key: 'brands' },
@@ -110,14 +156,40 @@
     }
   };
 
-  function chat(profile, message) {
+  // Answer "what's working?" from the creator's own logged posts; `insights` comes from the engine.
+  function statsReply(lang, insights, cfg) {
+    const g = insights && insights.groups || [];
+    const best = insights && insights.best;
+    const min = cfg ? cfg.insights.min_posts_per_format : 2;
+    if (!g.length && !best) {
+      return lang === 'hi' ? `Abhi mere paas views ka data nahi hai. You tab mein "Your posts" mein posts log karo aur views daalo, phir main bataunga kya chal raha hai.`
+        : 'I do not have any view counts yet. Log your posts under Your posts on the You tab and add their views, then I can tell you what is working.';
+    }
+    const lines = [];
+    if (g.length) {
+      const t = g[0];
+      const name = `${platformName(t.platform)} ${t.format || 'posts'}`.trim();
+      lines.push(lang === 'hi' ? `Abhi tumhara sabse acha ${name} hai: median ${fmtNum(t.median)} views (${t.posts} posts).` : `Your strongest format lately is ${name}: median ${fmtNum(t.median)} views over ${t.posts} posts.`);
+    } else {
+      lines.push(lang === 'hi' ? `Ek hi format ke ${min} posts views ke saath log hon tab main formats compare kar paunga.` : `Once you have ${min} posts of the same format with views, I can compare formats.`);
+    }
+    if (best) {
+      const name = `${platformName(best.platform)} ${best.format || 'post'}`.trim();
+      lines.push(lang === 'hi' ? `Tumhara best: ${name}, ${fmtNum(best.views)} views.` : `Your best: ${name}, ${fmtNum(best.views)} views.`);
+    }
+    lines.push(lang === 'hi' ? 'Yeh tumhare apne self-reported numbers hain, sirf tumhare apne posts se compare hue.' : 'These are your self-reported numbers, compared only with your own posts.');
+    return lines.join(' ');
+  }
+
+  function chat(profile, message, ctx) {
     const lang = L(profile);
     const n = Content.NICHES[profile.niche] || Content.NICHES.other;
     const intent = INTENTS.find(i => i.re.test(message));
+    if (intent && intent.key === 'stats') return statsReply(lang, ctx && ctx.insights, ctx && ctx.cfg);
     const r = REPLIES[lang][intent ? intent.key : 'fallback'];
     if (typeof r === 'function') return intent.key === 'hello' ? r((profile.name || '').split(' ')[0] || 'there') : r(n);
     return r;
   }
 
-  return { NAME, dailyBrief, react, chat, SKILL_LABEL };
+  return { NAME, dailyBrief, react, chat, postNudge, fmtNum, platformName, SKILL_LABEL };
 });
