@@ -1,0 +1,70 @@
+# LockIn gamification config. Every XP value, cap and threshold lives here.
+# Starting values from docs/PRD.md "Gamification system"; tune from beta data.
+version: 1
+
+xp:
+  idea:      { base: 10, bonus: 5,  bonus_min_score: 7 }
+  hook:      { base: 10, bonus: 10, bonus_min_score: 7 }
+  rewrite:   { base: 10, bonus: 10, bonus_min_score: 7 }
+  script:    { base: 25, bonus: 10, bonus_min_score: 7, min_words: 12 }
+  clip:      { base: 30, bonus: 10, bonus_min_score: 7 }   # Phase 3
+  review:    { base: 30, bonus: 0,  bonus_min_score: 11 }  # Phase 3
+  post:      { base: 100, bonus: 50 }                      # Phase 2, bonus when it hits the weekly goal
+  reflection: { base: 20, min_words: 15 }                  # Phase 2
+  lesson:    { base: 15 }
+
+# Practice actions share this daily cap. Posting and reflection XP are never capped.
+daily_practice_cap: 300
+capped_sources: [idea, hook, rewrite, script, clip, review, lesson]
+
+anti_gaming:
+  min_quality_score: 4          # below this a gated source earns 0 XP
+  gated_sources: [idea, hook, rewrite, script]
+  duplicate_similarity: 0.9     # cosine similarity to a past idea that counts as a duplicate
+
+streaks:
+  freeze_every_days: 7          # earn 1 freeze per 7-day run
+  max_freezes: 2
+  gentle_after_days: 30         # no guilt language when a run this long ends
+  milestones: [3, 7, 30]        # streak lengths that get a celebration
+
+weekly_goal:
+  min: 1
+  max: 7
+  suggested: 3
+
+# Each level needs this much more XP than the last: level n starts at step * n * (n - 1) / 2
+levels:
+  step: 100
+
+skills:
+  names: [hooks, retention, confidence, editing, storytelling, niche]
+  levels: 5
+  xp_per_level: 60
+  trained_by:
+    hook: [hooks]
+    rewrite: [hooks]
+    script: [storytelling, retention]
+    idea: [storytelling, niche]
+    clip: [confidence, hooks]
+    review: [editing, retention]
+
+leagues:
+  ladder: [Bronze, Silver, Gold, Platinum, Diamond]
+  cohort_size: 30
+  promote_top: 7
+  demote_bottom: 5
+
+tiers:
+  - { id: starter,    name: Starter,    rule: "Account created" }
+  - { id: poster,     name: Poster,     rule: "First verified post" }
+  - { id: consistent, name: Consistent, rule: "Hit your weekly goal 4 weeks in a row", goal_weeks: 4 }
+  - { id: rising,     name: Rising,     rule: "One post with 1,000+ views, or 100+ followers", min_best_views: 1000, min_followers: 100 }
+  - { id: breakout,   name: Breakout,   rule: "One post with 10,000+ views, or 1,000+ followers", min_best_views: 10000, min_followers: 1000 }
+  - { id: gig_ready,  name: Gig-ready,  rule: "Breakout + Consistent + average AI score of 7+ across your last 10 reps", min_avg_score: 7, avg_over_reps: 10 }
+
+notifications:
+  max_per_day: 2
+  quiet_start: "22:00"
+  quiet_end: "08:00"
+  streak_risk_hours_before_midnight: 2
