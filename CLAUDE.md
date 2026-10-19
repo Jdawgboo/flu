@@ -10,7 +10,7 @@ Build from `docs/PRD.md` (source PDF: `docs/LockIn-PRD.pdf`). Rules from the PRD
 6. If a platform API behaves differently from the PRD, stop and report it instead of working around it.
 
 ## Current state
-Phase 1 (daily loop) as a mobile PWA in `app/`, no backend yet. `app/src/engine.js`, `grader.js` and `coach.js` are pure modules written so they can move into `services/api` unchanged.
+Phase 1 (daily loop) as a mobile PWA in `app/`, no backend yet. Onboarding connects Instagram (demo sample data until `ig_api_base` in `config/app.yaml` points at a deployed `services/ig-connect` worker; see `docs/INSTAGRAM.md`). `app/src/engine.js`, `grader.js` and `coach.js` are pure modules written so they can move into `services/api` unchanged.
 
 - `npm install && npm test` runs unit tests; `node tests/e2e.mjs` runs the phone-sized browser tests.
 - `npm run build` writes `dist/` (the deployable site) and `dist/artifact.html` (single-file copy).

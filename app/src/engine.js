@@ -365,6 +365,29 @@
     return { groups: list, best: best ? { platform: best.platform, format: best.format, date: best.date, views: best.views, ideaId: best.ideaId || null } : null, windowDays: I.window_days };
   }
 
+  /* Likes plus comments on imported Instagram posts, for creators whose view counts we do not
+   * have. Median per format over the same window, and the single most-engaged post. */
+  function engagementInsights(state, cfg, now) {
+    const I = cfg.insights;
+    const today = localDay(now == null ? Date.now() : now);
+    const from = addDays(today, -(I.window_days - 1));
+    const groups = {};
+    let best = null;
+    (state.posts || []).forEach(p => {
+      if (!p || p.source !== 'instagram' || typeof p.likes !== 'number' || !isRealDay(p.date) || p.date < from || p.date > today) return;
+      const score = p.likes + (typeof p.comments === 'number' ? p.comments : 0);
+      const format = String(p.format || '');
+      const key = p.platform + '|' + format.toLowerCase();
+      (groups[key] = groups[key] || { key, platform: p.platform, format, scores: [] }).scores.push(score);
+      if (!best || score > best.score || (score === best.score && p.date >= best.date)) best = { platform: p.platform, format, date: p.date, score };
+    });
+    const list = Object.keys(groups).map(k => groups[k]).filter(g => g.scores.length >= I.min_posts_per_format).map(g => {
+      const v = g.scores.slice().sort((a, b) => a - b), m = v.length >> 1;
+      return { key: g.key, platform: g.platform, format: g.format, posts: v.length, median: v.length % 2 ? v[m] : Math.round((v[m - 1] + v[m]) / 2) };
+    }).sort((a, b) => b.median - a.median || b.posts - a.posts || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    return { groups: list, best, windowDays: I.window_days };
+  }
+
   // ---------- skills, tiers, badges ----------
 
   // Reps that earned nothing for these reasons don't train skills either.
@@ -400,7 +423,8 @@
    * platform connectors in Phase 2; until then everyone is Starter. */
   function tier(state, cfg) {
     const posts = (state.posts || []).filter(p => p.verified);
-    const followers = state.followers || 0;
+    // Followers imported from Instagram are unverified until the Phase 2 server checks them.
+    const followers = state.instagram && !state.instagram.verified ? 0 : state.followers || 0;
     const best = posts.reduce((m, p) => Math.max(m, p.views || 0), 0);
     const goalWeeks = state.weeklyGoalStreak || 0;
     const row = id => cfg.tiers.find(t => t.id === id) || {};
@@ -471,6 +495,6 @@
   return {
     localDay, addDays, weekStart, uid, tokens, cosine, isDuplicateIdea, isRepeatRep,
     award, reverse, isReversed, totalXP, weeklyXP, xpBetween, practiceXPOn, levelFor,
-    dailyStreak, hoursLeftToday, toMinutes, minutesOfDay, validatePost, setPostViews, setPostPlatform, postsInWeek, postNeedingViews, postInsights, migrate, quietWindow, isQuietAt, isQuiet, streakRiskStart, reminderMinutes, skills, tier, badges, league, recentAverageScore
+    dailyStreak, hoursLeftToday, toMinutes, minutesOfDay, validatePost, setPostViews, setPostPlatform, postsInWeek, postNeedingViews, postInsights, engagementInsights, migrate, quietWindow, isQuietAt, isQuiet, streakRiskStart, reminderMinutes, skills, tier, badges, league, recentAverageScore
   };
 });

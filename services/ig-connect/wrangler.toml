@@ -1,0 +1,15 @@
+# LockIn Instagram connect worker. Not deployed yet: see README.md and docs/INSTAGRAM.md.
+# Secrets (IG_APP_ID, IG_APP_SECRET, STATE_SECRET, TOKEN_ENC_KEY) are set with
+# `npx wrangler secret put <NAME>` and never written here.
+name = "lockin-ig-connect"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+# Origins the app is served from, comma separated, no trailing slash.
+ALLOWED_RETURN_ORIGINS = "https://example.github.io"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+# Fill in with the id printed by `npx wrangler kv namespace create SESSIONS`.
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

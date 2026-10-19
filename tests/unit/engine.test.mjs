@@ -721,3 +721,26 @@ describe('48-hour views prompt (postNeedingViews)', () => {
     assert.equal(s.ledger.length, 0);
   });
 });
+
+describe('imported Instagram data', () => {
+  test('unverified imported followers never raise the tier', () => {
+    const s = freshState();
+    s.followers = 5000; s.instagram = { username: 'x', verified: false };
+    assert.equal(E.tier(s, cfg).current.id, 'starter');
+    s.instagram.verified = true;
+    assert.equal(E.tier(s, cfg).current.id, 'breakout');
+  });
+  test('engagement insights use only imported posts, per format, in the window', () => {
+    const now = at('2026-10-19');
+    const ig = (id, date, format, likes, comments) => ({ id, date, platform: 'instagram', format, views: null, source: 'instagram', verified: false, likes, comments });
+    const s = freshState();
+    s.posts = [ig('a', '2026-10-18', 'Reel', 100, 10), ig('b', '2026-10-10', 'Reel', 300, 30), ig('c', '2026-10-12', 'Post', 50, 0),
+      ig('old', '2026-08-01', 'Reel', 9000, 9), { id: 'm', date: '2026-10-17', platform: 'instagram', format: 'Reel', views: 500, source: 'manual' }];
+    const r = E.engagementInsights(s, cfg, now);
+    assert.equal(r.groups.length, 1);
+    assert.deepEqual([r.groups[0].format, r.groups[0].posts, r.groups[0].median], ['Reel', 2, 220]);
+    assert.equal(r.best.score, 330);
+    // imported posts have no views, so views-based insights ignore them
+    assert.equal(E.postInsights(s, cfg, now).groups.length, 0);
+  });
+});

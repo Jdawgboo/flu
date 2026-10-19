@@ -1,0 +1,5 @@
+# App settings that are not gamification numbers.
+# ig_api_base: URL of the deployed services/ig-connect worker, no trailing slash,
+# e.g. "https://lockin-ig-connect.<account>.workers.dev". Empty means demo mode:
+# "Connect Instagram" loads a built-in sample creator instead. See docs/INSTAGRAM.md.
+ig_api_base: ""

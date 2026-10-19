@@ -169,15 +169,46 @@ async function fullRun(scheme) {
     await shot(page, `${tag}-01-welcome`);
   });
 
-  await step(`${tag}: sign-in validation, consent and OTP mock`, async () => {
+  await step(`${tag}: age and consent screen blocks under-18, saves nothing`, async () => {
     await act(page, 'ob-start');
+    await page.waitForSelector('[data-bind="birthDate"]');
+    await layout(page, 'agree');
+    await shot(page, `${tag}-02-agree`);
+    assert.equal(await page.locator('[data-action="ob-skip"]').count(), 0, 'age and consent cannot be skipped');
+    await act(page, 'ob-agree');
+    assert.match(await page.locator('.err').textContent(), /birth date/i);
+    await page.fill('[data-bind="birthDate"]', yearsAgo(30));
+    await act(page, 'ob-agree');
+    assert.match(await page.locator('.err').textContent(), /privacy notice/i, 'consent is required');
+    await page.check('[data-bind="consent"]');
+    await page.fill('[data-bind="birthDate"]', yearsAgo(18, 1)); // turns 18 tomorrow
+    await act(page, 'ob-agree');
+    await page.waitForSelector('text=18 and over');
+    const st = await S(page);
+    assert.equal(st.profile, null);
+    assert.deepEqual(st.ob.data, {});
+    const raw = await page.evaluate(() => localStorage.getItem('lockin.v1'));
+    assert.ok(!raw || !raw.includes(yearsAgo(18, 1)), 'birth date not kept after block');
+    await layout(page, 'blocked');
+    await shot(page, `${tag}-03-under18-blocked`);
+    await act(page, 'ob-reset');
+    await page.waitForSelector('[data-action="ob-start"]');
+  });
+
+  await step(`${tag}: manual path keeps phone sign-in and the OTP mock`, async () => {
+    await act(page, 'ob-start');
+    await page.check('[data-bind="consent"]');
+    await page.fill('[data-bind="birthDate"]', yearsAgo(25));
+    await act(page, 'ob-agree');
+    await page.waitForSelector('[data-action="ig-connect"]');
+    assert.match(await page.locator('[data-action="ig-connect"]').textContent(), /Connect Instagram \(demo\)/);
+    await layout(page, 'connect');
+    await shot(page, `${tag}-02b-connect`);
+    await act(page, 'ob-manual');
     await page.fill('[data-bind="phone"]', '12345');
     await act(page, 'otp-send');
     assert.match(await page.locator('.err').textContent(), /10-digit/);
     await page.fill('[data-bind="phone"]', '9876543210');
-    await act(page, 'otp-send');
-    assert.match(await page.locator('.err').textContent(), /privacy notice/i, 'consent is required');
-    await page.check('[data-bind="consent"]');
     await act(page, 'otp-send');
     await page.waitForSelector('[data-bind="otp"]');
     await layout(page, 'otp');
@@ -188,35 +219,20 @@ async function fullRun(scheme) {
     await page.fill('[data-bind="otp"]', '123456');
     await act(page, 'otp-verify');
     await page.waitForSelector('[data-bind="name"]');
-  });
-
-  await step(`${tag}: under-18 is blocked and nothing is saved`, async () => {
-    await page.fill('[data-bind="name"]', 'Kid');
-    await act(page, 'ob-name');
-    await page.fill('[data-bind="birthDate"]', yearsAgo(18, 1)); // turns 18 tomorrow
-    await act(page, 'ob-age');
-    await page.waitForSelector('text=18 and over');
-    const st = await S(page);
-    assert.equal(st.profile, null);
-    assert.deepEqual(st.ob.data, {});
-    const raw = await page.evaluate(() => localStorage.getItem('lockin.v1'));
-    assert.ok(!raw || !raw.includes('9876543210'), 'phone not kept after block');
-    await layout(page, 'blocked');
-    await shot(page, `${tag}-03-under18-blocked`);
-    await act(page, 'ob-reset');
+    assert.equal((await S(page)).ob.data.birthDate, yearsAgo(25));
+    await page.evaluate(() => window.LIApp.reset());
     await page.waitForSelector('[data-action="ob-start"]');
   });
 
-  await step(`${tag}: onboarding via Google, required niche, weekly goal`, async () => {
+  await step(`${tag}: manual onboarding via Google, required niche, weekly goal`, async () => {
     await act(page, 'ob-start');
-    await act(page, 'google');
-    assert.match(await page.locator('.err').textContent(), /privacy/i);
     await page.check('[data-bind="consent"]');
+    await page.fill('[data-bind="birthDate"]', yearsAgo(18)); // 18 today: allowed
+    await act(page, 'ob-agree');
+    await act(page, 'ob-manual');
     await act(page, 'google');
     await page.fill('[data-bind="name"]', 'Asha');
     await act(page, 'ob-name');
-    await page.fill('[data-bind="birthDate"]', yearsAgo(18)); // 18 today: allowed
-    await act(page, 'ob-age');
     await page.waitForSelector('[data-key="goal"]');
     await layout(page, 'goal');
     await page.locator('[data-key="goal"]').first().click();
@@ -259,14 +275,13 @@ async function fullRun(scheme) {
     await layout(page, 'ob-result');
     await shot(page, `${tag}-06-onboarding-result`);
     await shot(page, `${tag}-06b-onboarding-result-full`, true);
-    await act(page, 'ob-to-connect');
-    await page.waitForSelector('text=Connect your accounts');
-    await layout(page, 'connect');
     await act(page, 'ob-finish');
     await page.waitForSelector('.tabbar');
     const st2 = await S(page);
     assert.equal(st2.profile.name, 'Asha'); assert.equal(st2.profile.weeklyGoal, 4); assert.equal(st2.profile.notifyTime, '08:30');
     assert.equal(st2.profile.niche, 'food'); assert.ok(st2.profile.onboarded);
+    assert.equal(st2.profile.birthDate, yearsAgo(18)); assert.ok(st2.profile.consentAt);
+    assert.equal(st2.instagram, undefined);
     assert.equal(await page.locator('.chip.flame .num').textContent(), '1');
   });
 
@@ -1016,11 +1031,205 @@ async function v020Checks() {
   await sw.close();
 }
 
+// ---------- 0.3.0 additions: Instagram connect ----------
+async function v030Checks() {
+  console.log('\n== 0.3.0 ==');
+  const { context, page, errors } = await newPhone('light');
+  await page.goto(BASE + '/');
+  await page.waitForSelector('[data-action="ob-start"]');
+
+  await step('0.3.0: Instagram demo connect shortens onboarding to four steps', async () => {
+    await act(page, 'ob-start');
+    await page.check('[data-bind="consent"]');
+    await page.fill('[data-bind="birthDate"]', yearsAgo(24));
+    await act(page, 'ob-agree');
+    assert.equal(await page.locator('.dots i').count(), 4, 'agree, connect, confirm, exercise');
+    assert.equal(await page.locator('[data-action="ob-skip"]').count(), 0);
+    await act(page, 'ig-connect');
+    await page.waitForSelector('text=Connecting…');
+    await page.waitForSelector('#ig-card');
+    const card = await page.locator('#ig-card').textContent();
+    assert.match(card, /Priya/); assert.match(card, /@priya\.eats/); assert.match(card, /3,100/); assert.match(card, /12/); assert.match(card, /Sample data/);
+    const st = await S(page);
+    assert.equal(st.ob.step, 'confirm'); assert.equal(st.ob.data.niche, 'food'); assert.equal(st.ob.data.language, 'english');
+    assert.equal(st.instagram.demo, true); assert.equal(st.instagram.verified, false); assert.equal(st.followers, 3100);
+    assert.equal(st.posts.length, 12);
+    assert.ok(st.posts.every(p => p.source === 'instagram' && p.verified === false && p.views === null));
+    assert.equal(st.profile, null, 'nothing is final before the confirm screen');
+    await layout(page, 'confirm');
+    await shot(page, '030-confirm');
+  });
+
+  await step('0.3.0: confirm screen edits niche, language and weekly goal, then finishes with XP only from reps', async () => {
+    await page.click('[data-key="niche"][data-val="tech"]');
+    await page.click('[data-key="language"][data-val="hinglish"]');
+    await page.fill('[data-bind="name"]', 'Pri');
+    await page.click('[data-action="ob-goal"][data-d="1"]');
+    await act(page, 'ob-confirm');
+    await page.waitForSelector('[data-bind="hook0"]');
+    await page.fill('[data-bind="hook0"]', STRONG_HOOK);
+    await act(page, 'ob-hooks');
+    await page.waitForSelector('text=Your first XP');
+    await act(page, 'ob-finish');
+    await page.waitForSelector('.tabbar');
+    const st = await S(page);
+    assert.equal(st.profile.niche, 'tech'); assert.equal(st.profile.language, 'hinglish'); assert.equal(st.profile.name, 'Pri');
+    assert.equal(st.profile.weeklyGoal, 4); assert.equal(st.profile.authMethod, 'instagram');
+    assert.ok(st.ledger.every(e => e.source_type !== 'post'), 'no post XP');
+    assert.equal(st.highestTier, 'starter');
+    await closeModals(page);
+  });
+
+  await step('0.3.0: imported posts feed Your posts and the goal bar, never the tier', async () => {
+    await page.waitForSelector('.tabbar');
+    await act(page, 'tab', '[data-tab="you"]');
+    const posts = await page.locator('#your-posts').textContent();
+    assert.match(posts, /sample data/i); assert.match(posts, /likes/);
+    assert.match(await page.locator('#whats-working').textContent(), /likes \+ comments/);
+    assert.match(await page.locator('#ig-row').textContent(), /@priya\.eats/);
+    assert.match(await page.locator('#ig-row').textContent(), /Last synced/);
+    const st = await S(page);
+    assert.equal(st.highestTier, 'starter');
+    assert.match(await page.locator('.tier, #app').first().textContent(), /Starter/);
+    await layout(page, 'you-ig');
+    await shot(page, '030-you-instagram');
+  });
+
+  await step('0.3.0: demo refresh is a no-op toast; disconnect is two-step and deletes imported data', async () => {
+    await act(page, 'ig-refresh');
+    assert.match(await toastText(page), /Demo data/);
+    await act(page, 'ig-disconnect');
+    await page.waitForSelector('[data-action="ig-disconnect-yes"]');
+    await act(page, 'ig-disconnect-cancel');
+    assert.ok((await S(page)).instagram, 'cancel keeps it');
+    await act(page, 'ig-disconnect');
+    await act(page, 'ig-disconnect-yes');
+    await page.waitForSelector('[data-action="ig-connect"]');
+    const st = await S(page);
+    assert.equal(st.instagram, undefined); assert.equal(st.followers, undefined);
+    assert.equal(st.posts.filter(p => p.source === 'instagram').length, 0);
+    assert.ok(st.profile.onboarded);
+  });
+
+  await step('0.3.0: connecting from settings applies profile and posts without re-running onboarding', async () => {
+    const before = (await S(page)).profile;
+    await act(page, 'ig-connect');
+    await page.waitForSelector('#ig-row >> text=@priya.eats');
+    const st = await S(page);
+    assert.equal(st.posts.filter(p => p.source === 'instagram').length, 12);
+    assert.equal(st.profile.niche, before.niche); assert.equal(st.profile.name, before.name); assert.equal(st.profile.weeklyGoal, before.weeklyGoal);
+    assert.equal(st.ob.step, 'done');
+  });
+
+  await step('0.3.0: export leaves out the connect session', async () => {
+    await page.evaluate(() => { window.LIApp.state().instagram.session = 'SECRET-SESSION'; });
+    await act(page, 'export');
+    const text = await page.locator('textarea[data-select-all]').inputValue();
+    assert.ok(!text.includes('SECRET-SESSION')); assert.ok(text.includes('priya.eats'));
+  });
+
+  await step('0.3.0: no console errors in demo mode', async () => {
+    assert.deepEqual(errors.filter(e => !/fonts/.test(e)), []);
+  });
+  await context.close();
+
+  // Real mode: point ig_api_base at a fake service and follow the redirect back with #ig=<code>.
+  async function realPhone(profileReply) {
+    const ph = await newPhone('light');
+    const cfgJs = (await readFile(path.join(dist, 'config.js'), 'utf8')).replace('"ig_api_base": ""', '"ig_api_base": "https://ig.test"');
+    await ph.context.route(/\/config\.js$/, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: cfgJs }));
+    ph.calls = [];
+    await ph.context.route('https://ig.test/**', async r => {
+      const u = new URL(r.request().url());
+      ph.calls.push(r.request().method() + ' ' + u.pathname + u.search);
+      const cors = { 'access-control-allow-origin': '*' };
+      if (u.pathname === '/auth/start') return r.fulfill({ status: 302, headers: { location: u.searchParams.get('return') + '#ig=CODE123' } });
+      if (u.pathname === '/api/disconnect') return r.fulfill({ status: 200, contentType: 'application/json', headers: cors, body: '{}' });
+      const reply = profileReply(u);
+      return r.fulfill({ status: reply.status, contentType: 'application/json', headers: cors, body: JSON.stringify(reply.body) });
+    });
+    await ph.page.goto(BASE + '/');
+    await ph.page.waitForSelector('[data-action="ob-start"]');
+    return ph;
+  }
+  const goConnect = async page => {
+    await act(page, 'ob-start');
+    await page.check('[data-bind="consent"]');
+    await page.fill('[data-bind="birthDate"]', yearsAgo(24));
+    await act(page, 'ob-agree');
+  };
+
+  const good = u => ({ status: 200, body: { username: 'real.creator', name: 'Rhea Kapoor', account_type: 'MEDIA_CREATOR', biography: 'Gym workout and protein diet tips', followers_count: 820, follows_count: 90, media_count: 4, session: 'sess-1',
+    media: [1, 2, 3, 4].map(i => ({ id: 'm' + i, caption: 'Leg day workout and protein', media_type: 'VIDEO', permalink: 'https://instagram.com/p/' + i, timestamp: new Date(Date.now() - i * 86400000).toISOString().replace('Z', '+0000'), like_count: 40 * i, comments_count: i })) } });
+
+  await step('0.3.0: real mode redirects out, reads #ig=, strips it from the URL and imports', async () => {
+    const ph = await realPhone(good);
+    await goConnect(ph.page);
+    assert.match(await ph.page.locator('[data-action="ig-connect"]').textContent(), /^Connect Instagram$/);
+    await act(ph.page, 'ig-connect');
+    await ph.page.waitForSelector('#ig-card');
+    assert.ok(ph.calls.some(c => c.startsWith('GET /auth/start?return=')));
+    assert.ok(ph.calls.includes('GET /api/profile?code=CODE123'));
+    assert.ok(!ph.page.url().includes('#ig='), 'hash removed: ' + ph.page.url());
+    const st = await S(ph.page);
+    assert.equal(st.instagram.username, 'real.creator'); assert.equal(st.instagram.demo, false); assert.equal(st.instagram.session, 'sess-1');
+    assert.equal(st.ob.data.niche, 'fitness'); assert.equal(st.posts.length, 4);
+    assert.ok(!(await ph.page.locator('#ig-card').textContent()).includes('Sample data'));
+    // finish quickly, then refresh and disconnect from settings
+    await act(ph.page, 'ob-confirm');
+    await ph.page.fill('[data-bind="hook0"]', STRONG_HOOK);
+    await act(ph.page, 'ob-hooks'); await ph.page.waitForSelector('text=Your first XP');
+    await act(ph.page, 'ob-finish'); await ph.page.waitForSelector('.tabbar'); await closeModals(ph.page);
+    await act(ph.page, 'tab', '[data-tab="you"]');
+    await act(ph.page, 'ig-refresh');
+    await ph.page.waitForFunction(() => document.querySelector('.toast') && /refreshed/.test(document.querySelector('.toast').textContent));
+    assert.ok(ph.calls.includes('GET /api/profile?session=sess-1'));
+    await act(ph.page, 'ig-disconnect'); await act(ph.page, 'ig-disconnect-yes');
+    await ph.page.waitForSelector('[data-action="ig-connect"]');
+    assert.ok(ph.calls.includes('POST /api/disconnect?session=sess-1'));
+    assert.deepEqual(ph.errors.filter(e => !/fonts/.test(e)), []);
+    await ph.context.close();
+  });
+
+  await step('0.3.0: a personal account shows the switch-to-creator steps and keeps manual onboarding open', async () => {
+    const ph = await realPhone(() => ({ status: 422, body: { error: 'account_type' } }));
+    await goConnect(ph.page);
+    await act(ph.page, 'ig-connect');
+    await ph.page.waitForSelector('.err');
+    assert.match(await ph.page.locator('.err').textContent(), /Switch to professional account/);
+    assert.equal((await S(ph.page)).instagram, undefined);
+    await act(ph.page, 'ob-manual');
+    await ph.page.waitForSelector('[data-bind="phone"]');
+    await ph.context.close();
+  });
+
+  await step('0.3.0: network failure and denied access show friendly errors', async () => {
+    const ph = await realPhone(() => ({ status: 200, body: {} }));
+    await ph.context.unroute('https://ig.test/**');
+    await ph.context.route('https://ig.test/**', r => {
+      const u = new URL(r.request().url());
+      if (u.pathname === '/auth/start') return r.fulfill({ status: 302, headers: { location: u.searchParams.get('return') + '#ig=BAD' } });
+      return r.abort('failed');
+    });
+    await goConnect(ph.page);
+    await act(ph.page, 'ig-connect');
+    await ph.page.waitForSelector('.err');
+    assert.match(await ph.page.locator('.err').textContent(), /Could not reach/);
+    await ph.page.goto('about:blank');
+    await ph.page.goto(BASE + '/#ig_error=access_denied');
+    await ph.page.waitForSelector('.err');
+    assert.match(await ph.page.locator('.err').textContent(), /not allowed/);
+    assert.ok(!ph.page.url().includes('ig_error'));
+    await ph.context.close();
+  });
+}
+
 try {
   await fullRun('light');
   await fullRun('dark');
   await streakMilestones();
   await v020Checks();
+  await v030Checks();
   await artifactRun('light');
   await artifactRun('dark');
   await storageBlocked();

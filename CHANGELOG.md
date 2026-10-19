@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0 — 2026-10-19 · Connect Instagram, shorter onboarding
+Onboarding (fewer questions)
+- New flow: welcome → age + consent (one screen, under-18 still blocks) → Connect Instagram → confirm → first hook → home. Connecting skips sign-in, name, goal, niche and weekly screens. "Fill in manually instead" keeps the old screens (sign-in, name, goal, niche, weekly) minus the age and consent they used to hold.
+- The confirm screen shows what was imported (name, @handle, followers, post count) and the guessed niche, language and weekly goal, each editable, plus the reminder time. Only age and niche are still required; the step dots follow the path you are on.
+- Dropped the old "Connect your accounts, coming in Phase 2" screen.
+
+Instagram import (`app/src/instagram.js`, pure)
+- `inferProfile`: niche from keyword counts in bio and captions (ties, none or one stray hit give Other), Hinglish when 30%+ of captions read as Hinglish, weekly goal from posts in the last 28 days divided by 4 within the config min and max (suggested goal under 3 posts). `mediaToPosts`: Reel, Carousel and Post formats, local day of the timestamp, `source: 'instagram'`, always `verified: false`, no views.
+- Imported posts feed the weekly goal bar, "Your posts" (likes and comments shown) and a new "Imported from Instagram" section in "What's working" (`engagementInsights`, median likes plus comments). No XP, streak days or tiers. `tier()` ignores imported followers until `state.instagram.verified` (never true in this build).
+- Real mode when `ig_api_base` in the new `config/app.yaml` is set: redirect to the connect service, read and clear `#ig=`, fetch the profile; friendly errors for personal accounts (with the switch-to-creator steps), denied access and network failures. Empty means demo mode with a labelled sample creator (@priya.eats).
+- You → Settings → Instagram: handle, followers, last synced, Refresh, two-step Disconnect that deletes imported data; or Connect from settings (profile and posts only). Export leaves out the connect session id.
+
+Connect service (`services/ig-connect`, not deployed)
+- Cloudflare Worker: `/auth/start`, `/auth/callback`, `/api/profile` (code or session), `/api/disconnect`. HMAC-signed state, return-origin allow list, CORS limited to it, tokens AES-GCM encrypted on top of KV, secrets only as Worker secrets. Tests cover signing, origin checks, encryption and the whole flow against a stubbed Instagram.
+- `docs/INSTAGRAM.md`: what is auto-filled, Meta and Cloudflare setup by hand. YouTube is not covered.
+
 ## 0.2.0 — 2026-10-17 · Quality gates, quiet hours, self-reported posts
 Gaming and fairness
 - Scripts are gated like hooks and ideas: below the minimum quality score earns 0 XP, and scripts under `xp.script.min_words` earn 0 XP ("too short"). The gated sources are now `anti_gaming.gated_sources`.

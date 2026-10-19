@@ -5,15 +5,26 @@
 (function () {
   'use strict';
 
-  const E = window.LIEngine, C = window.LIContent, G = window.LIGrader, K = window.LICoach;
+  const E = window.LIEngine, C = window.LIContent, G = window.LIGrader, K = window.LICoach, IGM = window.LIInstagram;
   const cfg = window.LI_CONFIG;
   const KEY = 'lockin.v1';
   const STAGES = ['idea', 'hook', 'script', 'filmed', 'posted'];
   const STAGE_LABEL = { idea: 'Idea', hook: 'Hook', script: 'Script', filmed: 'Filmed', posted: 'Posted' };
   const WPS = 2.5; // spoken words per second, for script timing
   const DEMO_CODE = '123456';
-  const OB_STEPS = ['signin', 'name', 'age', 'goal', 'niche', 'weekly', 'exercise', 'connect'];
-  const OB_REQUIRED = ['age', 'niche'];
+  const IG_BASE = (cfg.app && cfg.app.ig_api_base) || ''; // empty = demo mode with a built-in sample creator
+  // Connecting Instagram fills in name, niche, language and weekly goal, so those screens drop out.
+  const OB_IG = ['agree', 'connect', 'confirm', 'exercise'];
+  const OB_MANUAL = ['agree', 'connect', 'signin', 'name', 'goal', 'niche', 'weekly', 'exercise'];
+  const OB_REQUIRED = ['agree', 'niche'];
+  const obSteps = () => (state.ob.data && state.ob.data.manual ? OB_MANUAL : OB_IG);
+  const IG_ERRORS = {
+    account_type: 'Instagram only shares data from creator or business accounts. Switch yours for free: Instagram → Settings → Account type and tools → Switch to professional account → Creator. Then connect again.',
+    denied: 'Instagram was not connected because access was not allowed. You can try again or fill in your details instead.',
+    network: 'Could not reach the Instagram connection service. Check your internet and try again, or fill in your details instead.',
+    expired: 'Your Instagram connection expired. Connect again to refresh.',
+    failed: 'Something went wrong connecting Instagram. Please try again, or fill in your details instead.'
+  };
 
   // ---------- time (overridable for tests) ----------
 
@@ -47,7 +58,7 @@
   }
 
   let state = load();
-  const ui = { editPost: null, tab: 'home', view: null, draft: {}, filter: 'all', err: '', otpSent: false, modals: [], confirmDelete: false, exportText: null, exportCopied: false, ideaConfirm: null, listening: false };
+  const ui = { igBusy: false, igErr: '', confirmIg: false, editPost: null, tab: 'home', view: null, draft: {}, filter: 'all', err: '', otpSent: false, modals: [], confirmDelete: false, exportText: null, exportCopied: false, ideaConfirm: null, listening: false };
 
   // ---------- helpers ----------
 
@@ -234,12 +245,13 @@
   function obGo(step) { state.ob.step = step; save(); go({}); }
 
   function obFrame(step, inner, foot) {
-    const i = OB_STEPS.indexOf(step === 'result' ? 'exercise' : step);
-    const canSkip = !OB_REQUIRED.includes(step) && step !== 'result' && step !== 'connect';
+    const steps = obSteps();
+    const i = steps.indexOf(step === 'result' ? 'exercise' : step);
+    const canSkip = !OB_REQUIRED.includes(step) && step !== 'result' && step !== 'connect' && step !== 'confirm';
     return `<section class="screen bare">
       <div class="ob-top">
         ${step === 'result' ? '<span></span>' : '<button class="btn ghost sm" data-action="ob-back" aria-label="Back">←</button>'}
-        <div class="dots" aria-label="Step ${i + 1} of ${OB_STEPS.length}">${OB_STEPS.map((s, j) => `<i class="${j === i ? 'on' : ''}"></i>`).join('')}</div>
+        <div class="dots" aria-label="Step ${i + 1} of ${steps.length}">${steps.map((s, j) => `<i class="${j === i ? 'on' : ''}"></i>`).join('')}</div>
         ${canSkip ? '<button class="linkbtn" data-action="ob-skip">Skip</button>' : '<span style="width:36px"></span>'}
       </div>
       <div class="ob-body">${inner}</div>
@@ -280,6 +292,18 @@
         <button class="btn block" data-action="ob-reset">Back to start</button>
       </div></section>`;
     }
+    if (step === 'agree') {
+      return obFrame('agree', `
+        <h1>Before we start</h1>
+        <p class="muted">LockIn is for creators 18 and over, because tiers lead to paid brand work.</p>
+        <label class="field"><span>Birth date</span><input type="date" data-bind="birthDate" max="${E.localDay(now())}" min="1900-01-01" value="${esc(draft('birthDate') || d.birthDate || '')}"></label>
+        <label class="check"><input type="checkbox" data-bind="consent" ${draft('consent') || d.consentAt ? 'checked' : ''}>
+          <span>I agree to LockIn processing my details to run my account, as described in the notice below.</span></label>
+        <p class="notice"><b>Privacy notice (DPDP Act 2023).</b> We use your birth date, name, niche, practice work and, if you connect Instagram, your public profile and recent posts, only to run your account and coach you. In this prototype it all stays in this browser on this device. Connecting Instagram is read-only and optional. You can export, disconnect or delete everything any time from You → Settings.</p>
+      `, '<button class="btn block" data-action="ob-agree">Continue</button>');
+    }
+    if (step === 'connect') return connectView();
+    if (step === 'confirm') return confirmView();
     if (step === 'signin') {
       const phoneBlock = ui.otpSent
         ? `<label class="field"><span>Enter the 6-digit code sent to +91 ${esc(d.phone || '')}</span>
@@ -292,13 +316,10 @@
            <button class="btn block" data-action="otp-send">Send code</button>`;
       return obFrame('signin', `
         <h1>Create your account</h1>
-        <p class="muted">Sign in so your streak and progress have a home.</p>
+        <p class="muted">Sign in so your streak and progress have a home. (Connecting Instagram instead skips this.)</p>
         ${phoneBlock}
         <div class="row muted small" style="justify-content:center">or</div>
         <button class="btn ghost block" data-action="google">${GOOGLE_G} Continue with Google</button>
-        <label class="check"><input type="checkbox" data-bind="consent" ${draft('consent') ? 'checked' : ''}>
-          <span>I agree to LockIn processing my details to run my account, as described in the notice below.</span></label>
-        <p class="notice"><b>Privacy notice (DPDP Act 2023).</b> We use your phone or email, name, birth date, niche and practice work only to run your account and coach you. In this prototype it all stays in this browser on this device and is never sent to a server. You can export or delete everything any time from You → Settings.</p>
       `, '');
     }
     if (step === 'name') {
@@ -306,13 +327,6 @@
         <h1>What should your coach call you?</h1>
         <label class="field"><span>First name</span><input type="text" autocomplete="given-name" maxlength="40" data-bind="name" value="${esc(draft('name') || d.name || '')}" placeholder="Priya"></label>
       `, '<button class="btn block" data-action="ob-name">Continue</button>');
-    }
-    if (step === 'age') {
-      return obFrame('age', `
-        <h1>When were you born?</h1>
-        <p class="muted">LockIn is for creators 18 and over, because tiers lead to paid brand work.</p>
-        <label class="field"><span>Birth date</span><input type="date" data-bind="birthDate" max="${E.localDay(now())}" min="1900-01-01" value="${esc(draft('birthDate'))}"></label>
-      `, '<button class="btn block" data-action="ob-age">Continue</button>');
     }
     if (step === 'goal') {
       return obFrame('goal', `
@@ -324,23 +338,14 @@
       return obFrame('niche', `
         <h1>Pick your niche</h1>
         <p class="muted">Your prompts, examples and feedback are tuned to it. You can change it later.</p>
-        <div class="options three">${Object.entries(C.NICHES).map(([id, n]) => `<button class="opt" data-action="ob-pick" data-key="niche" data-val="${id}" aria-pressed="${d.niche === id}"><span class="em" aria-hidden="true">${n.emoji}</span><b>${esc(n.label)}</b></button>`).join('')}</div>
-        <span class="label">Coach language</span>
-        <div class="options">${[['english', 'English', 'Clear and simple'], ['hinglish', 'Hinglish', 'Thoda mix, thoda masti']].map(([id, l, s]) => `<button class="opt" data-action="ob-pick" data-key="language" data-val="${id}" aria-pressed="${(d.language || 'english') === id}"><b>${l}</b><small>${s}</small></button>`).join('')}</div>
+        ${nichePickers(d)}
       `, '<button class="btn block" data-action="ob-niche">Continue</button>');
     }
     if (step === 'weekly') {
-      const g = d.weeklyGoal || cfg.weekly_goal.suggested;
       return obFrame('weekly', `
         <h1>How often will you post?</h1>
         <p class="muted">Pick a number you can keep. Most new creators start with ${cfg.weekly_goal.suggested} a week.</p>
-        <div class="stepper">
-          <button data-action="ob-goal" data-d="-1" aria-label="Fewer posts" ${g <= cfg.weekly_goal.min ? 'disabled' : ''}>−</button>
-          <div class="stack" style="align-items:center;gap:2px"><span class="big num">${g}</span><span class="muted small">posts a week</span></div>
-          <button data-action="ob-goal" data-d="1" aria-label="More posts" ${g >= cfg.weekly_goal.max ? 'disabled' : ''}>+</button>
-        </div>
-        <label class="field"><span>Daily reminder from your coach</span><input type="time" data-bind="notifyTime" value="${esc(draft('notifyTime') || d.notifyTime || '19:00')}"></label>
-        <p class="small muted">We send at most ${cfg.notifications.max_per_day} reminders a day and never between ${cfg.notifications.quiet_start} and ${cfg.notifications.quiet_end}.</p>
+        ${weeklyPickers(d)}
       `, '<button class="btn block" data-action="ob-weekly">Continue</button>');
     }
     if (step === 'exercise') {
@@ -361,22 +366,73 @@
         ? `<div class="card hero" style="text-align:center;align-items:center"><div style="font-size:44px" aria-hidden="true">🎉</div><h1 class="num">+${r.xp} XP</h1><p>Your first XP. 🔥 Day ${s.current} of your streak starts now.</p></div>`
         : `<div class="card warn"><h2>No XP on this one</h2><p>Every creator writes weak first drafts. Use the fix below and try again, or carry on and do a rep from Home.</p></div>`;
       return obFrame('result', head + feedbackCards(r), `
-        <button class="btn block" data-action="ob-to-connect">Continue</button>
+        <button class="btn block" data-action="ob-finish">Finish and go home</button>
         <button class="btn ghost block" data-action="ob-retry">Try again</button>`);
-    }
-    if (step === 'connect') {
-      return obFrame('connect', `
-        <h1>Connect your accounts</h1>
-        <p class="muted">Later, LockIn reads your post results so tiers reflect real views. It never posts for you.</p>
-        <div class="card"><div class="row between"><h3>Instagram</h3><span class="pill gold">Coming in Phase 2</span></div>
-          <p class="small muted">Needs a free creator or business account. To switch: Instagram → Settings → Account type and tools → Switch to professional account → Creator. It's free and you can switch back.</p></div>
-        <div class="card"><div class="row between"><h3>YouTube</h3><span class="pill gold">Coming in Phase 2</span></div>
-          <p class="small muted">Works with any channel. We only ask for read access to your videos and stats.</p></div>
-        <p class="small muted">Until then, you can mark ideas as posted yourself.</p>
-      `, '<button class="btn block" data-action="ob-finish">Finish and go home</button><button class="btn ghost block" data-action="ob-finish">Skip for now</button>');
     }
     state.ob.step = 'welcome';
     return onboardingView();
+  }
+
+  // Shared by the manual niche and weekly steps and the Instagram confirm screen.
+  function nichePickers(d) {
+    return `<div class="options three">${Object.entries(C.NICHES).map(([id, n]) => `<button class="opt" data-action="ob-pick" data-key="niche" data-val="${id}" aria-pressed="${d.niche === id}"><span class="em" aria-hidden="true">${n.emoji}</span><b>${esc(n.label)}</b></button>`).join('')}</div>
+      <span class="label">Coach language</span>
+      <div class="options">${[['english', 'English', 'Clear and simple'], ['hinglish', 'Hinglish', 'Thoda mix, thoda masti']].map(([id, l, s]) => `<button class="opt" data-action="ob-pick" data-key="language" data-val="${id}" aria-pressed="${(d.language || 'english') === id}"><b>${l}</b><small>${s}</small></button>`).join('')}</div>`;
+  }
+
+  function weeklyPickers(d) {
+    const g = d.weeklyGoal || cfg.weekly_goal.suggested;
+    return `<div class="stepper">
+        <button data-action="ob-goal" data-d="-1" aria-label="Fewer posts" ${g <= cfg.weekly_goal.min ? 'disabled' : ''}>−</button>
+        <div class="stack" style="align-items:center;gap:2px"><span class="big num">${g}</span><span class="muted small">posts a week</span></div>
+        <button data-action="ob-goal" data-d="1" aria-label="More posts" ${g >= cfg.weekly_goal.max ? 'disabled' : ''}>+</button>
+      </div>
+      <label class="field"><span>Daily reminder from your coach</span><input type="time" data-bind="notifyTime" value="${esc(draft('notifyTime') || d.notifyTime || '19:00')}"></label>
+      <p class="small muted">We send at most ${cfg.notifications.max_per_day} reminders a day and never between ${cfg.notifications.quiet_start} and ${cfg.notifications.quiet_end}.</p>`;
+  }
+
+  function igCard(ig) {
+    const initial = (ig.name || ig.username || '?').trim()[0].toUpperCase();
+    return `<div class="card" id="ig-card"><div class="row"><div class="avatar" aria-hidden="true">${esc(initial)}</div>
+        <div class="grow stack" style="gap:2px"><b>${esc(ig.name || ig.username)}</b><span class="muted small">@${esc(ig.username)}</span></div>
+        ${ig.demo ? '<span class="pill gold">Sample data</span>' : '<span class="pill">Imported</span>'}</div>
+      <div class="row small"><span><b class="num">${fmtNum(ig.followers_count)}</b> followers</span><span><b class="num">${fmtNum(ig.media_count)}</b> posts</span></div>
+      ${ig.demo ? '<p class="small muted">Demo mode: this is a made-up sample creator, not your account.</p>' : ''}</div>`;
+  }
+
+  function connectView() {
+    const ig = state.instagram;
+    if (ig) {
+      return obFrame('connect', `
+        <h1>Instagram connected</h1>
+        ${igCard(ig)}
+      `, '<button class="btn block" data-action="ob-confirm-go">Continue</button><button class="linkbtn" data-action="ob-manual">Fill in manually instead</button>');
+    }
+    const label = ui.igBusy ? 'Connecting…' : IG_BASE ? 'Connect Instagram' : 'Connect Instagram (demo)';
+    return obFrame('connect', `
+      <h1>Connect Instagram</h1>
+      <p class="muted">LockIn reads your profile and recent posts to fill in your name, niche, language and posting goal. It is read-only and never posts for you.</p>
+      <div class="card"><h3>What you need</h3>
+        <p class="small muted">A free creator or business account. To switch: Instagram → Settings → Account type and tools → Switch to professional account → Creator. You can switch back.</p></div>
+      ${IG_BASE ? '' : '<p class="notice">Demo mode: no real account is connected. This loads a sample creator (@priya.eats) so you can see the flow.</p>'}
+      <p class="small muted">YouTube is not connected yet.</p>
+      ${ui.igErr ? `<p class="err" role="alert">${esc(ui.igErr)}</p>` : ''}
+    `, `<button class="btn block" data-action="ig-connect" ${ui.igBusy ? 'disabled' : ''}>${label}</button><button class="linkbtn" data-action="ob-manual">Fill in manually instead</button>`);
+  }
+
+  function confirmView() {
+    const d = state.ob.data, ig = state.instagram;
+    if (!ig) { state.ob.step = 'connect'; return onboardingView(); }
+    return obFrame('confirm', `
+      <h1>Does this look right?</h1>
+      ${igCard(ig)}
+      ${(d.igNotes || []).length ? `<p class="small muted">${d.igNotes.map(esc).join(' ')}</p>` : ''}
+      <label class="field"><span>First name</span><input type="text" autocomplete="given-name" maxlength="40" data-bind="name" value="${esc(draft('name') || d.name || '')}" placeholder="Priya"></label>
+      <span class="label">Niche</span>
+      ${nichePickers(d)}
+      <span class="label">Weekly posting goal</span>
+      ${weeklyPickers(d)}
+    `, '<button class="btn block" data-action="ob-confirm">Looks good</button>');
   }
 
   const GOOGLE_G = '<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
@@ -397,7 +453,7 @@
   function finishOnboarding() {
     const d = state.ob.data;
     state.profile = {
-      name: d.name || '', phone: d.phone || '', authMethod: d.method || 'guest', birthDate: d.birthDate,
+      name: d.name || '', phone: d.phone || '', authMethod: d.method || (state.instagram ? 'instagram' : 'guest'), birthDate: d.birthDate,
       goal: d.goal || null, niche: d.niche, language: d.language || 'english',
       weeklyGoal: d.weeklyGoal || cfg.weekly_goal.suggested, notifyTime: d.notifyTime || '19:00',
       timezone: (Intl.DateTimeFormat().resolvedOptions().timeZone || ''), theme: 'system', notifications: false,
@@ -409,13 +465,6 @@
     save();
     go({ tab: 'home', view: null });
     toast(`Welcome to LockIn${state.profile.name ? ', ' + state.profile.name : ''}`);
-  }
-
-  function needConsent() {
-    if (draft('consent')) { state.ob.data.consentAt = iso(now()); return true; }
-    ui.err = 'Please accept the privacy notice to continue.';
-    render();
-    return false;
   }
 
   // ---------- main tabs ----------
@@ -947,7 +996,8 @@
     const title = p.platform
       ? `<b>${esc(platformName(p.platform))}${p.format ? ' · ' + esc(p.format) : ''}</b>`
       : `<b>Add platform</b> <span class="row wrap" style="display:inline-flex;gap:6px">${cfg.posts.platforms.map(id => `<button class="btn soft sm" data-action="post-set-platform" data-id="${p.id}" data-val="${id}">${esc(platformName(id))}</button>`).join('')}</span>`;
-    const views = p.views != null ? `<span class="num">${fmtNum(p.views)}</span> views` : 'No views added';
+    const eng = p.source === 'instagram' && p.likes != null ? `<span class="num">${fmtNum(p.likes)}</span> likes · <span class="num">${fmtNum(p.comments || 0)}</span> comments` : '';
+    const views = p.views != null ? `<span class="num">${fmtNum(p.views)}</span> views${eng ? ' · ' + eng : ''}` : eng || 'No views added';
     return `<div class="li small" data-post="${p.id}"><div class="grow stack" style="gap:4px">
         <div>${title} <span class="muted">· ${esc(postDayLabel(p.date))}</span></div>
         <div class="muted">${views}</div>
@@ -959,18 +1009,21 @@
   function postsCard() {
     const list = recentPosts(10);
     return `<div class="card" id="your-posts"><div class="row between"><h2>Your posts</h2><button class="linkbtn" data-action="log-post-open">Log a post</button></div>
-      <p class="small muted">Self-reported by you. Posts here earn no XP and do not change your tier.</p>
+      <p class="small muted">Logged by you or imported from Instagram${state.instagram && state.instagram.demo ? ' (sample data)' : ''}. Posts here earn no XP and do not change your tier.</p>
       ${list.length ? `<div class="list">${list.map(postRow).join('')}</div>` : '<p class="muted small">No posts logged yet. Mark an idea posted, or log one from Home.</p>'}
     </div>`;
   }
 
   function insightsCard() {
-    const ins = E.postInsights(state, cfg, now());
+    const ins = E.postInsights(state, cfg, now()), eng = E.engagementInsights(state, cfg, now());
     const name = (platform, format, fallback) => `${platformName(platform)}${format ? ' · ' + format : fallback ? ' · ' + fallback : ''}`;
     return `<div class="card" id="whats-working"><h2>What's working</h2>
       ${ins.groups.length ? `<div class="list">${ins.groups.map(g => `<div class="li small"><span class="grow">${esc(name(g.platform, g.format, 'posts'))}: median <span class="num">${fmtNum(g.median)}</span> views (${plural(g.posts, 'post')})</span></div>`).join('')}</div>`
         : `<p class="muted small">Log at least ${cfg.insights.min_posts_per_format} posts of the same format with their views, from the last ${cfg.insights.window_days} days, and we will show what works for you.</p>`}
       ${ins.best ? `<p class="small"><b>Your best:</b> ${esc(platformName(ins.best.platform))}${ins.best.format ? ' ' + esc(ins.best.format) : ''}, <span class="num">${fmtNum(ins.best.views)}</span> views</p>` : ''}
+      ${eng.groups.length || eng.best ? `<span class="label">Imported from Instagram${state.instagram && state.instagram.demo ? ' (sample)' : ''}</span>
+        ${eng.groups.length ? `<div class="list">${eng.groups.map(g => `<div class="li small"><span class="grow">${esc(name(g.platform, g.format, 'posts'))}: median <span class="num">${fmtNum(g.median)}</span> likes + comments (${plural(g.posts, 'post')})</span></div>`).join('')}</div>` : ''}
+        ${eng.best ? `<p class="small"><b>Most engaged:</b> ${esc(eng.best.format || 'Post')}, <span class="num">${fmtNum(eng.best.score)}</span> likes + comments (counts come from Instagram)</p>` : ''}` : ''}
       <p class="small muted">Self-reported. Compared only with your own posts.</p>
     </div>`;
   }
@@ -983,6 +1036,24 @@
     if (perm === 'denied') return 'Blocked in browser settings.';
     if (p.notifications && perm === 'granted') return `On. Reminder at ${p.notifyTime}, while the app is open in this prototype.`;
     return 'Off.';
+  }
+
+  function instagramRow() {
+    const ig = state.instagram;
+    const err = ui.igErr ? `<p class="err" role="alert">${esc(ui.igErr)}</p>` : '';
+    if (!ig) {
+      return `<div class="stack" id="ig-row"><div class="row between"><div class="grow"><b>Instagram</b><p class="small muted">Import your profile and recent posts. Read-only.${IG_BASE ? '' : ' Demo mode loads a sample creator.'}</p></div>
+        <button class="btn soft sm" data-action="ig-connect" ${ui.igBusy ? 'disabled' : ''}>${ui.igBusy ? 'Connecting…' : IG_BASE ? 'Connect Instagram' : 'Connect Instagram (demo)'}</button></div>${err}</div>`;
+    }
+    return `<div class="stack" id="ig-row"><div class="row between"><div class="grow"><b>Instagram</b> ${ig.demo ? '<span class="pill gold">Sample data</span>' : ''}
+        <p class="small muted">@${esc(ig.username)} · <span class="num">${fmtNum(ig.followers_count)}</span> followers</p>
+        <p class="small muted">Last synced ${esc(fmtDate(ig.syncedAt))}</p></div>
+        <button class="btn soft sm" data-action="ig-refresh" ${ui.igBusy ? 'disabled' : ''}>${ui.igBusy ? 'Syncing…' : 'Refresh'}</button></div>
+      ${err}
+      ${ui.confirmIg
+        ? `<div class="card warn"><h3>Disconnect Instagram?</h3><p class="small">This deletes the imported profile, followers and posts from this device. Posts you logged yourself stay.</p>
+            <div class="row"><button class="btn ghost grow" data-action="ig-disconnect-cancel">Cancel</button><button class="btn danger grow" data-action="ig-disconnect-yes">Yes, disconnect</button></div></div>`
+        : '<button class="btn ghost sm" data-action="ig-disconnect">Disconnect</button>'}</div>`;
   }
 
   function settingsCard() {
@@ -998,6 +1069,7 @@
       <select data-setting="niche" aria-label="Niche">${Object.entries(C.NICHES).map(([id, n]) => `<option value="${id}" ${p.niche === id ? 'selected' : ''}>${n.emoji} ${esc(n.label)}</option>`).join('')}</select>
       <span class="label">Weekly posting goal</span>
       <div class="stepper"><button data-action="set-goal" data-d="-1" aria-label="Fewer posts" ${p.weeklyGoal <= cfg.weekly_goal.min ? 'disabled' : ''}>−</button><span class="big num" style="font-size:40px">${p.weeklyGoal}</span><button data-action="set-goal" data-d="1" aria-label="More posts" ${p.weeklyGoal >= cfg.weekly_goal.max ? 'disabled' : ''}>+</button></div>
+      ${instagramRow()}
       <label class="field"><span>Daily reminder time</span><input type="time" data-setting="notifyTime" value="${esc(p.notifyTime)}"></label>
       ${quietNote}
       <div class="row"><label class="field grow"><span>Quiet hours start</span><input type="time" data-setting="quietStart" value="${esc(qw.start)}"></label>
@@ -1154,6 +1226,102 @@
     return st;
   }
 
+  // ---------- Instagram import ----------
+
+  function igClear() {
+    delete state.instagram;
+    delete state.followers;
+    state.posts = state.posts.filter(p => p.source !== 'instagram');
+  }
+
+  // Ask the connect service to forget the stored token; best effort, the local data goes either way.
+  function igRevoke() {
+    const ig = state.instagram;
+    if (!IG_BASE || !ig || !ig.session) return;
+    try { fetch(`${IG_BASE}/api/disconnect?session=${encodeURIComponent(ig.session)}`, { method: 'POST' }).catch(() => {}); } catch (e) { /* ignore */ }
+  }
+
+  // Store the profile and its posts. Imported posts stay unverified: they feed the goal bar and
+  // insights only, never XP or tiers (Phase 2 verifies real posts on the server).
+  function igApply(data) {
+    const t = now(), prev = state.instagram || {};
+    const num = v => (typeof v === 'number' && isFinite(v) && v >= 0 ? Math.floor(v) : 0);
+    const str = (v, n) => String(v == null ? '' : v).slice(0, n);
+    state.instagram = {
+      username: str(data.username, 60), name: str(data.name, 80), account_type: str(data.account_type, 20), biography: str(data.biography, 300),
+      profile_picture_url: str(data.profile_picture_url, 500), followers_count: num(data.followers_count), follows_count: num(data.follows_count), media_count: num(data.media_count),
+      demo: !IG_BASE, session: str(data.session || prev.session, 200), connectedAt: prev.connectedAt || iso(t), syncedAt: iso(t), verified: false
+    };
+    state.followers = state.instagram.followers_count;
+    state.posts = state.posts.filter(p => p.source !== 'instagram').concat(IGM.mediaToPosts(data, t));
+  }
+
+  // A successful connect: during onboarding fill in the answers and show the confirm screen.
+  function igConnected(data) {
+    igApply(data);
+    ui.igBusy = false; ui.igErr = '';
+    if (state.profile && state.profile.onboarded) {
+      save(); render();
+      toast(`Instagram connected: @${state.instagram.username}`);
+      return;
+    }
+    const guess = IGM.inferProfile(data, cfg, now());
+    Object.assign(state.ob.data, { manual: false, name: guess.name, niche: guess.niche, language: guess.language, weeklyGoal: guess.weeklyGoal, igNotes: guess.notes });
+    ui.draft.name = guess.name;
+    obGo('confirm');
+  }
+
+  function igFailed(code) {
+    ui.igBusy = false;
+    ui.igErr = IG_ERRORS[code] || IG_ERRORS.failed;
+    if (state.profile && state.profile.onboarded) toast(ui.igErr.split('. ')[0] + '.');
+    render();
+  }
+
+  async function igFetch(query) {
+    let res, body = null;
+    try { res = await fetch(`${IG_BASE}/api/profile?${query}`); } catch (e) { throw new Error('network'); }
+    try { body = await res.json(); } catch (e) { /* not JSON */ }
+    if (!res.ok) throw new Error(body && body.error === 'account_type' ? 'account_type' : res.status === 401 || res.status === 404 ? 'expired' : 'failed');
+    return body;
+  }
+
+  function igConnect() {
+    if (ui.igBusy) return;
+    if (IG_BASE) {
+      // The service sends the browser back here with #ig=<one-time code>, picked up by igReturn().
+      const back = encodeURIComponent(location.origin + location.pathname);
+      location.assign(`${IG_BASE}/auth/start?return=${back}`);
+      return;
+    }
+    ui.igBusy = true; ui.igErr = ''; render();
+    setTimeout(() => igConnected(IGM.sampleProfile(now())), 900);
+  }
+
+  function igRefresh() {
+    const ig = state.instagram;
+    if (!ig || ui.igBusy) return;
+    if (!IG_BASE) { toast('Demo data is a fixed sample, so there is nothing new to fetch'); return; }
+    ui.igBusy = true; ui.igErr = ''; render();
+    igFetch('session=' + encodeURIComponent(ig.session))
+      .then(data => { igApply(data); ui.igBusy = false; save(); render(); toast('Instagram refreshed'); })
+      .catch(e => igFailed(e.message));
+  }
+
+  // Back from the connect service: read #ig=<code> or #ig_error=<reason>, clear it from the URL, fetch the profile.
+  function igReturn() {
+    const hash = location.hash || '';
+    const code = (hash.match(/[#&]ig=([^&]+)/) || [])[1], error = (hash.match(/[#&]ig_error=([^&]+)/) || [])[1];
+    if (!code && !error) return;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* ignore */ }
+    const onboarded = state.profile && state.profile.onboarded;
+    if (!onboarded && !(state.ob.data && state.ob.data.consentAt)) return; // consent comes first
+    if (onboarded) { ui.tab = 'you'; ui.view = null; } else state.ob.step = 'connect';
+    if (error) { igFailed(/denied|cancel/i.test(error) ? 'denied' : 'failed'); return; }
+    ui.igBusy = true;
+    igFetch('code=' + encodeURIComponent(decodeURIComponent(code))).then(igConnected).catch(e => igFailed(e.message));
+  }
+
   // ---------- actions ----------
 
   // Add or update the view count on a logged post. Self-reported, so no XP and no ledger row.
@@ -1167,25 +1335,25 @@
   }
 
   const actions = {
-    'ob-start': () => obGo('signin'),
+    'ob-start': () => obGo('agree'),
     demo: () => { state = seedDemo(); ui.draft = {}; save(); go({ tab: 'home', view: null, modals: [] }); toast('Demo profile loaded: Priya, food creator'); },
     'ob-back': () => {
       const step = state.ob.step;
       if (step === 'signin' && ui.otpSent) { ui.otpSent = false; render(); return; }
-      const i = OB_STEPS.indexOf(step);
-      obGo(i <= 0 ? 'welcome' : OB_STEPS[i - 1]);
+      ui.igErr = '';
+      const i = obSteps().indexOf(step);
+      obGo(i <= 0 ? 'welcome' : obSteps()[i - 1]);
     },
     'ob-skip': () => {
       const step = state.ob.step;
-      if (step === 'signin') { if (!needConsent()) return; state.ob.data.method = 'guest'; }
+      if (step === 'signin') state.ob.data.method = 'guest';
       if (step === 'weekly') state.ob.data.weeklyGoal = state.ob.data.weeklyGoal || cfg.weekly_goal.suggested;
-      obGo(OB_STEPS[OB_STEPS.indexOf(step) + 1] || 'connect');
+      obGo(obSteps()[obSteps().indexOf(step) + 1] || 'exercise');
     },
     'ob-reset': () => { state = fresh(); ui.draft = {}; ui.otpSent = false; save(); go({}); },
     'otp-send': () => {
       const phone = String(draft('phone')).replace(/\D/g, '');
       if (!/^[6-9]\d{9}$/.test(phone)) { ui.err = 'Enter a 10-digit Indian mobile number.'; render(); return; }
-      if (!needConsent()) return;
       state.ob.data.phone = phone;
       ui.otpSent = true; ui.err = ''; save(); render();
       toast('Code sent (demo: ' + DEMO_CODE + ')');
@@ -1193,32 +1361,58 @@
     'otp-change': () => { ui.otpSent = false; ui.err = ''; render(); },
     'otp-verify': () => {
       if (String(draft('otp')).trim() !== DEMO_CODE) { ui.err = 'That code does not match. In this demo the code is ' + DEMO_CODE + '.'; render(); return; }
-      if (!needConsent()) return;
       state.ob.data.method = 'phone';
       ui.otpSent = false;
       obGo('name');
     },
     google: () => {
-      if (!needConsent()) return;
       state.ob.data.method = 'google';
       toast('Signed in with Google (demo)');
       obGo('name');
     },
-    'ob-name': () => { state.ob.data.name = String(draft('name')).trim().slice(0, 40); obGo('age'); },
-    'ob-age': () => {
-      const b = String(draft('birthDate'));
+    'ob-name': () => { state.ob.data.name = String(draft('name')).trim().slice(0, 40); obGo('goal'); },
+    'ob-agree': () => {
+      const b = String(draft('birthDate') || state.ob.data.birthDate || '');
       if (!/^\d{4}-\d{2}-\d{2}$/.test(b) || b < '1900-01-01' || b > E.localDay(now())) { ui.err = 'Enter your birth date.'; render(); return; }
       if (ageOn(b, now()) < 18) {
-        state.ob = { step: 'blocked', data: {} };
+        state = Object.assign(fresh(), { ob: { step: 'blocked', data: {} } });
         ui.draft = {};
         save(); go({});
         return;
       }
+      if (!draft('consent') && !state.ob.data.consentAt) { ui.err = 'Please accept the privacy notice to continue.'; render(); return; }
       state.ob.data.birthDate = b;
-      obGo('goal');
+      state.ob.data.consentAt = state.ob.data.consentAt || iso(now());
+      obGo('connect');
+    },
+    'ob-manual': () => {
+      if (state.instagram) igClear();
+      state.ob.data.manual = true; ui.igErr = '';
+      obGo('signin');
+    },
+    'ob-confirm-go': () => obGo('confirm'),
+    'ob-confirm': () => {
+      const d = state.ob.data;
+      if (!d.niche) { ui.err = 'Pick a niche to continue.'; render(); return; }
+      d.name = String(draft('name') || d.name || '').trim().slice(0, 40);
+      d.language = d.language || 'english';
+      d.weeklyGoal = d.weeklyGoal || cfg.weekly_goal.suggested;
+      if (draft('notifyTime')) d.notifyTime = draft('notifyTime');
+      obGo('exercise');
+    },
+    'ig-connect': () => igConnect(),
+    'ig-refresh': () => igRefresh(),
+    'ig-disconnect': () => { ui.confirmIg = true; render(); },
+    'ig-disconnect-cancel': () => { ui.confirmIg = false; render(); },
+    'ig-disconnect-yes': () => {
+      igRevoke();
+      igClear();
+      ui.confirmIg = false; ui.igErr = '';
+      save(); render();
+      toast('Instagram disconnected and its data deleted from this device');
     },
     'ob-pick': el => { state.ob.data[el.dataset.key] = el.dataset.val; ui.err = ''; save(); render(); },
-    'ob-next-from': el => obGo(OB_STEPS[OB_STEPS.indexOf(el.dataset.step) + 1]),
+    'ob-next-from': el => obGo(obSteps()[obSteps().indexOf(el.dataset.step) + 1]),
     'ob-niche': () => {
       if (!state.ob.data.niche) { ui.err = 'Pick a niche to continue.'; render(); return; }
       state.ob.data.language = state.ob.data.language || 'english';
@@ -1245,7 +1439,6 @@
       burst(ui.obResult.xp);
     },
     'ob-retry': () => { ['hook0', 'hook1', 'hook2'].forEach(k => { delete ui.draft[k]; }); obGo('exercise'); },
-    'ob-to-connect': () => obGo('connect'),
     'ob-finish': () => finishOnboarding(),
 
     tab: el => go({ tab: el.dataset.tab, view: null, ideaConfirm: null, confirmDelete: false, exportText: null }),
@@ -1363,7 +1556,7 @@
     },
     'notify-toggle': () => toggleNotifications(),
     export: () => {
-      const text = JSON.stringify(state, null, 2);
+      const text = JSON.stringify(state, (k, v) => (k === 'session' ? undefined : v), 2); // the connect session is a credential
       ui.exportText = text; ui.exportCopied = false;
       render();
       try {
@@ -1376,6 +1569,7 @@
     delete: () => { ui.confirmDelete = true; render(); },
     'delete-cancel': () => { ui.confirmDelete = false; render(); },
     'delete-yes': () => {
+      igRevoke();
       try { localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
       memory = null;
       state = fresh();
@@ -1447,6 +1641,7 @@
     checkNotify
   };
 
+  igReturn();
   render();
   checkNotify();
 })();

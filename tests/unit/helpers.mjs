@@ -11,6 +11,7 @@ export const Engine = require(path.join(root, 'app/src/engine.js'));
 export const Grader = require(path.join(root, 'app/src/grader.js'));
 export const Coach = require(path.join(root, 'app/src/coach.js'));
 export const Content = require(path.join(root, 'app/src/content.js'));
+export const Instagram = require(path.join(root, 'app/src/instagram.js'));
 
 function loadConfig() {
   const text = readFileSync(path.join(root, 'config/gamification.yaml'), 'utf8');

@@ -1,6 +1,6 @@
 {
   "name": "lockin",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "LockIn creator growth app, Phase 1 PWA prototype",
   "type": "module",
@@ -8,7 +8,7 @@
     "build": "node scripts/build.mjs",
     "icons": "node scripts/icons.mjs",
     "serve": "cd dist && python3 -m http.server 8080",
-    "test": "node --test \"tests/unit/*.test.mjs\""
+    "test": "node --test \"tests/unit/*.test.mjs\" \"services/*/test/*.test.mjs\""
   },
   "devDependencies": {
     "js-yaml": "4.3.2",

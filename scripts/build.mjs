@@ -9,10 +9,12 @@ const app = new URL('app/', root);
 const dist = new URL('dist/', root);
 const read = p => readFile(new URL(p, app), 'utf8');
 
-const SCRIPTS = ['src/content.js', 'src/engine.js', 'src/grader.js', 'src/coach.js', 'src/app.js'];
+const SCRIPTS = ['src/content.js', 'src/engine.js', 'src/grader.js', 'src/coach.js', 'src/instagram.js', 'src/app.js'];
 const ASSETS = ['index.html', 'styles.css', 'manifest.webmanifest', 'icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', ...SCRIPTS];
 
 const config = yaml.load(await readFile(new URL('config/gamification.yaml', root), 'utf8'));
+const appConfig = yaml.load(await readFile(new URL('config/app.yaml', root), 'utf8')) || {};
+config.app = { ig_api_base: String(appConfig.ig_api_base || '').replace(/\/+$/, '') };
 const baseConfigJs = `window.LI_CONFIG = ${JSON.stringify(config, null, 2)};\n`;
 
 // Version the offline cache by the content it serves; the same hash is shown in Settings as the build.
