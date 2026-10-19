@@ -592,7 +592,7 @@ describe('self-reported posts', () => {
     ];
     s.posts = [{ id: 'old', ideaId: 'c', date: '2026-10-11', platform: 'youtube', source: 'manual' }];
     E.migrate(s);
-    assert.equal(s.v, 4);
+    assert.equal(s.v, 5);
     assert.equal(s.posts.length, 2);
     const made = s.posts.find(p => p.ideaId === 'a');
     assert.deepEqual({ ...made, id: undefined }, { id: undefined, ideaId: 'a', date: '2026-10-10', platform: null, format: '', views: null, viewsUpdatedAt: null, note: '', source: 'manual', verified: false, loggedOn: '2026-10-10' });
@@ -606,7 +606,21 @@ describe('self-reported posts', () => {
     const s = { ideas: [], ledger: [] };
     E.migrate(s);
     assert.deepEqual(s.posts, []);
-    assert.equal(s.v, 4);
+    assert.equal(s.v, 5);
+  });
+
+  test('migrate adds an empty ai client id, keeps a valid one and drops junk', () => {
+    const s = { ideas: [], ledger: [] };
+    E.migrate(s);
+    assert.deepEqual(s.ai, { client_id: '' });
+    s.ai = { client_id: 'abcDEF123_-xyz' };
+    E.migrate(s);
+    assert.equal(s.ai.client_id, 'abcDEF123_-xyz');
+    s.ai = { client_id: 'bad id with spaces' };
+    E.migrate(s);
+    assert.equal(s.ai.client_id, '');
+    s.ai = 'nonsense';
+    assert.deepEqual(E.migrate(s).ai, { client_id: '' });
   });
 });
 

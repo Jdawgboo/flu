@@ -125,7 +125,7 @@ describe('state migration v4', () => {
   test('voice replies default on, keep an explicit off, idempotent', () => {
     const s = {}; E.migrate(s);
     assert.deepEqual(s.voice, { replies: true });
-    assert.equal(s.v, 4);
+    assert.equal(s.v, 5);
     s.voice.replies = false; E.migrate(s);
     assert.equal(s.voice.replies, false);
     const o = { voice: { replies: 'x' } }; E.migrate(o);

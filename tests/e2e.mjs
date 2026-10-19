@@ -923,7 +923,7 @@ async function v020Checks() {
     await page.reload();
     await page.waitForSelector('.tabbar');
     let st = await S(page);
-    assert.equal(st.v, 4);
+    assert.equal(st.v, 5);
     const posted = st.ideas.filter(i => i.stage === 'posted');
     assert.equal(st.posts.length, posted.length);
     assert.equal(st.posts[0].platform, null);
@@ -1676,6 +1676,117 @@ async function v050Checks() {
   }
 }
 
+async function v060Checks() {
+  console.log('\n== 0.6.0 ==');
+  const IDEA = 'A reel about my ₹80 dosa at the hostel canteen near campus';
+  const send = async (page, text) => { await page.fill('[data-bind="chatText"]', text); await page.press('[data-bind="chatText"]', 'Enter'); };
+  const noErrors = (ph, allow = /fonts|ERR_INTERNET_DISCONNECTED/) => assert.deepEqual(ph.errors.filter(e => !allow.test(e)), []);
+  const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, x-lockin-client' };
+  const cfgApp = JSON.parse((await readFile(path.join(dist, 'config.js'), 'utf8')).match(/window\.LI_CONFIG = (\{[\s\S]*?\n\});\n/)[1]).app.studio;
+  const n = (k, f) => Array.from({ length: cfgApp[k] }, (_, i) => f(i + 1));
+  // Valid studio.v1 parts, all marked LIVE so the page can tell them from the template mock.
+  const PARTS = {
+    strategist: () => ({ angles: n('angles', i => ({ id: 'a' + i, label: 'LIVE angle ' + i, why: 'Because live ' + i })), questions: n('questions', i => 'LIVE question ' + i + '?') }),
+    instagram: () => ({ concepts: [
+      { format: 'Reel', title: 'LIVE reel', hook: 'My 80 rupee dosa beats the cafe one', shots: n('reel_shots', i => ({ n: i, seconds: 6, shot: 'LIVE shot ' + i, onscreen: '' })), caption: 'LIVE caption', cta: 'Comment DOSA for the spot' },
+      { format: 'Carousel', title: 'LIVE carousel', hook: 'Five dosas under 100 rupees', slides: n('carousel_slides', i => ({ n: i, text: 'LIVE slide ' + i })), caption: 'LIVE caption', cta: 'Save this for later' }] }),
+    thread: () => ({ platform: 'x', posts: n('thread_posts', i => 'LIVE post ' + i) }),
+    linkedin: () => ({ platform: 'linkedin', posts: n('linkedin_posts', i => 'LIVE para ' + i) }),
+    board: () => ({ tiles: n('board_tiles', i => ({ n: i, label: 'LIVE tile ' + i, visual: 'A dosa on a steel plate', text: '' })) }),
+    critic: () => ({ verdict: 'tweak', risks: ['LIVE risk'], fix: 'LIVE fix', hook_score: 7 })
+  };
+  async function aiPhone(mode) {
+    const ph = await newPhone('light');
+    ph.calls = [];
+    if (mode !== 'off') {
+      const cfgJs = (await readFile(path.join(dist, 'config.js'), 'utf8')).replace('"ai_api_base": ""', '"ai_api_base": "https://ai.test"');
+      await ph.context.route(/\/config\.js$/, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: cfgJs }));
+    }
+    await ph.context.route('https://ai.test/**', async r => {
+      const req = r.request();
+      if (req.method() === 'OPTIONS') return r.fulfill({ status: 204, headers: CORS });
+      const b = JSON.parse(req.postData());
+      ph.calls.push({ headers: req.headers(), body: b });
+      if (mode === 'quota') return r.fulfill({ status: 429, headers: CORS, contentType: 'application/json', body: JSON.stringify({ error: 'quota', retry_after: 60 }) });
+      return r.fulfill({ status: 200, headers: CORS, contentType: 'application/json', body: JSON.stringify({ json: PARTS[b.agent]() }) });
+    });
+    await ph.page.goto(BASE + '/');
+    await ph.page.waitForSelector('[data-action="demo"]');
+    await act(ph.page, 'demo');
+    await ph.page.waitForSelector('.tabbar');
+    await closeModals(ph.page);
+    return ph;
+  }
+
+  {
+    const ph = await aiPhone('live');
+    await step('0.6.0 live: llm JSON renders in six cards, marked "AI: live", with the client id header', async () => {
+      const xp0 = total(await S(ph.page)), ideas0 = (await S(ph.page)).ideas.length;
+      await send(ph.page, IDEA);
+      await ph.page.waitForFunction(() => document.querySelectorAll('.studio-set .studio-card').length === 6);
+      assert.equal(await ph.page.locator('.studio-card').evaluateAll(els => els.map(e => e.dataset.agent)).then(a => a.join()), 'strategist,instagram,thread,linkedin,board,critic');
+      assert.match(await ph.page.locator('.studio-card[data-agent="thread"]').textContent(), /LIVE post 1/);
+      assert.match(await ph.page.locator('.studio-card[data-agent="board"]').textContent(), /LIVE tile 1/);
+      assert.equal(await ph.page.locator('.ai-mode').getAttribute('data-ai'), 'live');
+      assert.match(await ph.page.locator('.ai-mode').textContent(), /^\s*AI: live\s*$/);
+      assert.equal(await ph.page.locator('.ai-notice').count(), 0);
+      assert.equal(ph.calls.length, 6);
+      assert.deepEqual(ph.calls.map(c => c.body.agent).sort(), ['board', 'critic', 'instagram', 'linkedin', 'strategist', 'thread']);
+      const id = (await S(ph.page)).ai.client_id;
+      assert.match(id, /^[A-Za-z0-9_-]{8,64}$/);
+      assert.ok(ph.calls.every(c => c.headers['x-lockin-client'] === id));
+      assert.ok(ph.calls.every(c => JSON.stringify(c.body.input).includes('dosa')), 'idea text is in input');
+      assert.ok(ph.calls.every(c => !('system' in c.body) && c.body.schema), 'the client sends no system prompt, the Worker owns them');
+      const st = await S(ph.page);
+      assert.equal(total(st), xp0, 'AI output earns no XP');
+      assert.equal(st.ideas.length, ideas0);
+      await layout(ph.page, 'studio-live');
+      await shot(ph.page, 'light-060-live');
+    });
+    await step('0.6.0 live: no console errors', async () => noErrors(ph));
+    await ph.context.close();
+  }
+
+  {
+    const ph = await aiPhone('quota');
+    await step('0.6.0 429: falls back to the mock with a one-line notice, still six valid cards', async () => {
+      await send(ph.page, IDEA);
+      await ph.page.waitForFunction(() => document.querySelectorAll('.studio-set .studio-card').length === 6);
+      assert.equal(await ph.page.locator('.ai-mode').getAttribute('data-ai'), 'fallback');
+      assert.match(await ph.page.locator('.ai-mode').textContent(), /AI: template fallback/);
+      assert.match(await ph.page.locator('.ai-notice').textContent(), /out of free quota/);
+      assert.ok(!/LIVE/.test(await ph.page.locator('.studio-set').textContent()), 'mock content only');
+      assert.ok(await ph.page.locator('.studio-card[data-agent="critic"] [data-verdict]').count());
+      assert.ok(ph.calls.length >= 1 && ph.calls.length <= 5, 'client stops calling after the first 429 (' + ph.calls.length + ')');
+      await layout(ph.page, 'studio-quota');
+      await shot(ph.page, 'light-060-quota');
+    });
+    await step('0.6.0 429: a second idea in the quota window makes no new requests but still answers', async () => {
+      const before = ph.calls.length;
+      await send(ph.page, 'A carousel about three cheap breakfast spots near Koramangala');
+      await ph.page.waitForFunction(() => document.querySelectorAll('.studio-set .studio-card').length === 12);
+      assert.equal(ph.calls.length, before);
+      assert.equal(await ph.page.locator('.ai-notice').count(), 2);
+    });
+    await step('0.6.0 429: no page errors', async () => noErrors(ph, /fonts|ERR_INTERNET_DISCONNECTED|status of 429/));
+    await ph.context.close();
+  }
+
+  {
+    const ph = await aiPhone('off');
+    await step('0.6.0 mock: ai_api_base empty means no network call and no AI indicator', async () => {
+      await send(ph.page, IDEA);
+      await ph.page.waitForFunction(() => document.querySelectorAll('.studio-set .studio-card').length === 6);
+      assert.equal(ph.calls.length, 0);
+      assert.equal(await ph.page.locator('.ai-mode').count(), 0);
+      assert.equal((await S(ph.page)).chat.filter(m => m.kind === 'studio')[0].result.mode, 'mock');
+      assert.equal((await S(ph.page)).ai.client_id, '', 'no id is made when AI is off');
+    });
+    await step('0.6.0 mock: no console errors', async () => noErrors(ph));
+    await ph.context.close();
+  }
+}
+
 try {
   await fullRun('light');
   await fullRun('dark');
@@ -1684,6 +1795,7 @@ try {
   await v030Checks();
   await v040Checks();
   await v050Checks();
+  await v060Checks();
   await artifactRun('light');
   await artifactRun('dark');
   await storageBlocked();

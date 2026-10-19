@@ -1,4 +1,4 @@
-# Idea Studio (0.4.0)
+# Idea Studio (0.4.0, live AI since 0.6.0)
 
 `app/src/studio.js` turns one idea into content for Instagram, X and LinkedIn, plus a strategy, a visual board and a critic's verdict. It is pure (no DOM, no network, needs only `content.js` and `grader.js`) and ships with a deterministic, template-based mock. `app/src/router.js` decides which messages reach it.
 
@@ -32,7 +32,7 @@
   critic: { verdict: "ship"|"tweak"|"rethink", risks: [], fix, hook_score },
   next: [{ action: "save-idea"|"idea-rep"|"open-rep", label }] }
 ```
-`mode` is `llm` when at least one agent's answer came from the model.
+`mode` is `llm` when at least one agent's answer came from the model. The cards show "AI: live" or "AI: template fallback" from it, and a notice when the AI service refused for quota.
 
 ## The `llm` interface
 ```
@@ -40,13 +40,10 @@ llm.complete({ agent, system, input, schema }) -> Promise<json>
 ```
 Called once per agent (the critic last, with the other parts in `input.parts`). Every answer is validated against the agent's shape and the configured counts. An invalid answer, a rejection or no answer within `studio.timeout_ms` falls back to the mock for that agent only. Cheat or gibberish ideas never reach the model.
 
-## Going live (not done in this build)
-1. Add `services/ai`, a Cloudflare Worker like `services/ig-connect`, exposing `POST /complete` with the `llm.complete` contract.
-2. Keep the Anthropic API key as a Worker secret (`wrangler secret put`), never in the repo, `.env` committed files or the client.
-3. Enforce a per-user AI budget in the Worker (requests and tokens per user per day, with a hard monthly ceiling); return a friendly error so the app falls back to the mock.
-4. Rate-limit per user, log token use without the idea text, and decide retention before storing any prompts.
-5. Set `ai_api_base` in `config/app.yaml` and build a small fetch-backed `llm` in `app.js` (today `STUDIO_LLM` is `null`).
-6. Review the system prompts in `studio.js` and the refusal rules with Jash before launch.
+## Going live (0.6.0)
+Done: `services/ai` (a Cloudflare Worker, Gemini by default, swappable provider) exposes `POST /v1/complete` with the `llm.complete` contract, and `app/src/llm.js` is the fetch-backed client wired into `app.js` when `ai_api_base` in `config/app.yaml` is set. The provider key is a Worker secret, never in the repo or the client. The Worker enforces per-user and global daily limits and logs no user text. System prompts live in `prompts/studio/*.md`. Setup, privacy caveats and provider swapping are in `docs/AI.md`.
+
+Still open: review the prompts and refusal rules with Jash before launch, decide retention (none is stored today), and add a paid-tier or other provider if the free-tier privacy terms are not acceptable.
 
 ## Blackboard and perks
 - `state.board = { text, cards: [{ id, text, ai }], saves: [{ id, text, at, xp }] }`. A save of the notepad text awards `xp.board` through `E.award` (min words, near-copy and gibberish gate, `max_per_day`, shared daily cap).

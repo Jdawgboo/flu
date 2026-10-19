@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  const E = window.LIEngine, C = window.LIContent, G = window.LIGrader, K = window.LICoach, IGM = window.LIInstagram, ST = window.LIStudio, R = window.LIRouter, V = window.LIVoice;
+  const E = window.LIEngine, C = window.LIContent, G = window.LIGrader, K = window.LICoach, IGM = window.LIInstagram, ST = window.LIStudio, R = window.LIRouter, V = window.LIVoice, LL = window.LILlm;
   const cfg = window.LI_CONFIG;
   const APP = cfg.app || {};
   const SC = APP.studio;
@@ -40,7 +40,7 @@
 
   function fresh() {
     return {
-      v: 4, voice: { replies: true }, profile: null, ob: { step: 'welcome', data: {} },
+      v: 5, voice: { replies: true }, ai: { client_id: '' }, profile: null, ob: { step: 'welcome', data: {} },
       ledger: [], reps: [], ideas: [], lessonsDone: [], chat: [], posts: [], board: { text: '', cards: [], saves: [] },
       notif: { day: '', count: 0, sent: {} }, seenLevel: 1, highestTier: 'starter', leagueIndex: 0
     };
@@ -1139,8 +1139,19 @@
 
   const QUICK = ["I'm stuck", 'Plan a shoot with friends', 'What should I post today?', 'How do I write a better hook?', "What's working?", 'My views are low', 'When should I post?', 'How do brand deals work?', 'Can I buy followers?'];
   const MIC_HINT = "Voice typing isn't supported here. Tap the keyboard's mic or type.";
-  // The AI behind the studio is the built-in mock. Pass { llm } to ST.run to plug in a real model later.
-  const STUDIO_LLM = null;
+  // The AI behind the studio is the built-in mock unless config app.ai_api_base points at a deployed
+  // services/ai Worker (docs/AI.md). Any failure there falls back to the mock per agent (studio.js).
+  const AI_BASE = APP.ai_api_base || '';
+  const aiRun = { quota: false }; // set by the client when a call in the current run was refused for quota
+  function aiClientId() {
+    if (!state.ai || !state.ai.client_id) { state.ai = { client_id: LL.newClientId() }; save(); }
+    return state.ai.client_id;
+  }
+  const STUDIO_LLM = AI_BASE && LL ? LL.create({
+    base: AI_BASE, fetch: (u, i) => window.fetch(u, i), clientId: aiClientId, header: (APP.ai || {}).client_id_header,
+    timeoutMs: SC.timeout_ms, defaultRetryAfterS: (APP.ai || {}).default_retry_after_s, maxRetryAfterS: (APP.ai || {}).max_retry_after_s,
+    onError: e => { if (e && e.code === 'quota') aiRun.quota = true; }
+  }) : null;
 
   function studioCtx() {
     const t = now();
@@ -1177,7 +1188,10 @@
       if (n.action === 'idea-rep') return m.savedId ? `<button class="btn soft sm" data-action="idea-rep" data-type="hook" data-id="${m.savedId}">${esc(n.label)}</button>` : '';
       return `<button class="btn soft sm" data-action="open-rep" data-type="hook">${esc(n.label)}</button>`;
     }).join('');
+    const aiLine = m.ai && m.ai !== 'off'
+      ? `<p class="small muted ai-mode" data-ai="${r.mode === 'llm' ? 'live' : 'fallback'}"><span class="pill ${r.mode === 'llm' ? 'good' : 'gold'}">${r.mode === 'llm' ? 'AI: live' : 'AI: template fallback'}</span>${m.ai === 'quota' ? ' <span class="ai-notice">The AI is busy or out of free quota right now, so these are template drafts. Try again later.</span>' : ''}</p>` : '';
     return `<div class="studio-set" data-lang="${r.lang}">
+      ${aiLine}
       ${card('strategist', `<p class="small muted">${l.angles}</p><ul>${r.strategist.angles.map(a => `<li><b>${esc(a.label)}</b>: ${esc(a.why)}</li>`).join('')}</ul><p class="small muted">${l.questions}</p><ul>${r.strategist.questions.map(q => `<li>${esc(q)}</li>`).join('')}</ul>`)}
       ${card('instagram', `<p><b>Reel:</b> ${esc(reel.title)}</p><p class="hook">"${esc(reel.hook)}"</p><ol class="shots">${reel.shots.map(x => `<li>${esc(x.shot)} <span class="muted">(${x.seconds}s${x.onscreen ? ' · text: ' + esc(x.onscreen) : ''})</span></li>`).join('')}</ol><p class="small"><b>${l.caption}:</b> ${esc(reel.caption)}</p>
         <p><b>Carousel:</b> ${esc(car.title)}</p><p class="hook">"${esc(car.hook)}"</p><ol class="shots">${car.slides.map(x => `<li>${esc(x.text)}</li>`).join('')}</ol><p class="small"><b>${l.caption}:</b> ${esc(car.caption)}</p>`)}
@@ -1241,8 +1255,9 @@
     let flash = false, rep = null, pending = null;
     if (r.intent === 'idea') {
       ui.thinking = true;
+      aiRun.quota = false;
       pending = ST.run(text, c, { llm: STUDIO_LLM })
-        .then(result => reply({ from: 'coach', kind: 'studio', result }))
+        .then(result => reply({ from: 'coach', kind: 'studio', result, ai: STUDIO_LLM ? (aiRun.quota ? 'quota' : 'on') : 'off' }))
         .catch(() => reply({ from: 'coach', text: K.chat(p, text, { insights: c.insights, cfg }) }))
         .then(() => { ui.thinking = false; ui.chatScroll = 'start'; save(); render(); return { msg: last, rep: false }; });
     } else if (r.intent === 'group') reply({ from: 'coach', kind: 'group', plan: ST.groupPlan(text, p, c) });

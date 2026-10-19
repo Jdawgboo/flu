@@ -4,7 +4,7 @@
 const CACHE = 'lockin-__VERSION__';
 const SHELL = [
   './', './index.html', './styles.css', './config.js',
-  './src/content.js', './src/engine.js', './src/grader.js', './src/coach.js', './src/studio.js', './src/router.js', './src/voice.js', './src/instagram.js', './src/app.js',
+  './src/content.js', './src/engine.js', './src/grader.js', './src/coach.js', './src/studio.js', './src/router.js', './src/voice.js', './src/llm.js', './src/instagram.js', './src/app.js',
   './manifest.webmanifest', './icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'
 ];
 

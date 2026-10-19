@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0 — 2026-10-19 · Real AI for the Idea Studio (Gemini, free tier)
+Jash will use a free Google Gemini key. The studio's agents can now run on a real model behind a provider-agnostic Worker. Mock mode is still the default and the fallback: with `ai_api_base` empty nothing goes over the network. Nothing is deployed and no key is in the repo.
+
+- `services/ai` (new): Cloudflare Worker, `POST /v1/complete { agent, system, input, schema? } -> { json }`. Provider registry (`src/providers/`): `gemini.js` (default; key only in the `x-goog-api-key` header from the secret `GEMINI_API_KEY`, `responseMimeType` JSON, `responseSchema` cleaned to Gemini's subset, system via `systemInstruction`) and a marked, untested `openai.js` stub. `AI_PROVIDER` and `AI_MODEL` vars choose them. Strict CORS (`ALLOWED_ORIGINS`), agent allow-list and size caps, request timeout, per-client per-minute and per-day limits plus a global daily cap in KV (anonymous client id header, IP hash fallback) returning 429 with `retry_after`, provider quota mapped to `429 { error: "quota" }`, JSON-only errors, logs with metrics only.
+- App: `app/src/llm.js` (UMD, injected fetch) implements `llm.complete`, sends a per-install random client id (`state.ai.client_id`, state v5), stops calling after a 429 until `retry_after`, throws on every failure so `studio.js` falls back to the mock per agent. Wired into `app.js` only when `ai_api_base` is set. Studio results show "AI: live" or "AI: template fallback" and a one-line notice when quota is hit.
+- Prompts: `prompts/studio/` (common rules, strategist, instagram, thread, linkedin, board, critic, hinglish) are the source; `npm run gen:ai` writes `services/ai/src/prompts.js` (counts from config, test checks it is in sync). The Worker owns the system prompts; the client sends only agent, input and schema. The critic never approves fake-engagement ideas. User text goes only in `input`. AI output still earns 0 XP.
+- Config: `config/app.yaml` gains `ai.client_id_header` (`x-lockin-client`) and `ai.default_retry_after_s` (60); `studio.timeout_ms` 8000 to 15000 (a real model is slower). Worker limits are vars in `services/ai/wrangler.toml`: `AI_PER_IP_MINUTE` 20, `AI_PER_IP_DAY` 100 (always enforced), `AI_PER_MINUTE` 12, `AI_PER_DAY` 60 (extra per client id), `ai.max_retry_after_s` 3600, `AI_GLOBAL_DAILY` 200, `AI_MAX_INPUT_CHARS` 12000, `AI_MODEL` gemini-2.5-flash (check it in Google AI Studio).
+- Docs: `docs/AI.md` (architecture, setup, free-tier privacy caveat, swapping providers), `docs/STUDIO.md` updated.
+
 ## 0.5.0 — 2026-10-19 · Voice mode: talk to it like Siri
 Jash's ask: "it will be like siri so we can talk anytime we are free and ideating". Voice is now the main way into Home. The mock AI is unchanged and nothing goes over the network.
 

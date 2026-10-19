@@ -1,0 +1,36 @@
+# LockIn AI worker (Idea Studio). Not deployed yet: see README.md and docs/AI.md.
+# The provider key (GEMINI_API_KEY) is set with `npx wrangler secret put GEMINI_API_KEY` and never written here.
+name = "lockin-ai"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+# Origins the app is served from, comma separated, no trailing slash. Requests from any other origin get 403.
+ALLOWED_ORIGINS = "https://jdawgboo.github.io"
+# Provider adapter in src/providers/index.js: "gemini" (default) or "openai" (stub).
+AI_PROVIDER = "gemini"
+# Free-tier Gemini flash model. Model names change: check the current free one in Google AI Studio
+# (https://aistudio.google.com) and edit this line, nothing else.
+AI_MODEL = "gemini-2.5-flash"
+# Agents the app may ask for.
+AI_AGENTS = "strategist,instagram,thread,linkedin,board,critic"
+# Request limits.
+AI_MAX_INPUT_CHARS = "12000"     # serialized `input`
+AI_MAX_SCHEMA_CHARS = "8000"
+AI_MAX_OUTPUT_TOKENS = "8192"
+AI_BODY_TIMEOUT_MS = "5000"     # reading the request body
+AI_TIMEOUT_MS = "14000"          # provider call; keep under studio.timeout_ms in config/app.yaml
+# One studio idea = 6 calls. Per-IP limits (hash of the IP) always apply; the per-id limits are an
+# extra, stricter bucket for the app's self-chosen client id (rotating the id gains nothing).
+# The global cap protects the free quota (only allowed requests count): set it under the daily
+# request limit shown for your model in Google AI Studio.
+AI_PER_IP_MINUTE = "20"
+AI_PER_IP_DAY = "100"
+AI_PER_MINUTE = "12"
+AI_PER_DAY = "60"
+AI_GLOBAL_DAILY = "200"
+
+[[kv_namespaces]]
+binding = "LIMITS"
+# Fill in with the id printed by `npx wrangler kv namespace create LIMITS`.
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

@@ -1,0 +1,1 @@
+Language: the creator writes Hinglish. Write every sentence you produce in Hinglish: Roman-script Hindi mixed with English, the way creators caption ("Yeh galti mat karo", "Ek hi cheez badlo"). Never use Devanagari. Keep the JSON keys and enum values (verdict, format, platform) exactly as in the schema, in English.

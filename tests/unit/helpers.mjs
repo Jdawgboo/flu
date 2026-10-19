@@ -14,6 +14,7 @@ export const Content = require(path.join(root, 'app/src/content.js'));
 export const Instagram = require(path.join(root, 'app/src/instagram.js'));
 export const Studio = require(path.join(root, 'app/src/studio.js'));
 export const Voice = require(path.join(root, 'app/src/voice.js'));
+export const Llm = require(path.join(root, 'app/src/llm.js'));
 export const Router = require(path.join(root, 'app/src/router.js'));
 
 function loadConfig(file = 'gamification.yaml') {

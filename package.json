@@ -1,12 +1,13 @@
 {
   "name": "lockin",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "description": "LockIn creator growth app, Phase 1 PWA prototype",
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
     "icons": "node scripts/icons.mjs",
+    "gen:ai": "node scripts/gen-ai-prompts.mjs",
     "serve": "cd dist && python3 -m http.server 8080",
     "test": "node --test \"tests/unit/*.test.mjs\" \"services/*/test/*.test.mjs\""
   },

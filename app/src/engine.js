@@ -348,7 +348,10 @@
     // v4: spoken replies on or off (voice mode), on by default.
     const vo = state.voice && typeof state.voice === 'object' ? state.voice : {};
     state.voice = { replies: typeof vo.replies === 'boolean' ? vo.replies : true };
-    state.v = Math.max(state.v || 0, 4);
+    // v5: an anonymous random id for the AI service's rate limiter (filled in by the app on first use).
+    const ai = state.ai && typeof state.ai === 'object' ? state.ai : {};
+    state.ai = { client_id: typeof ai.client_id === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(ai.client_id) ? ai.client_id : '' };
+    state.v = Math.max(state.v || 0, 5);
     return state;
   }
 
