@@ -178,5 +178,11 @@
     { id: 'l8', title: 'Why buying views backfires', body: 'Bought views and followers do not watch or engage, so your engagement rate drops and the algorithm shows you to fewer real people. Brands also check for it.', q: 'What happens after buying 5,000 followers?', options: ['Real reach usually drops', 'The algorithm rewards you'], answer: 0 }
   ];
 
-  return { NICHES, GOALS, LESSONS };
+  // Asking for bought or fake growth. Shared by the coach chat and the studio critic.
+  const CHEAT_RE = /\b(buy|bought|purchase|fake|kharid)\w*\b.{0,24}\b(follower|view|like|subscriber|comment)|\bpaid (follower|view|like|subscriber)|\b(follower|view|like|subscriber)s?\b.{0,20}\b(buy|purchase|kharid|khareed)|follow ?(for|4) ?follow|\bf4f\b|\bl4l\b|engagement pods?|\bbots?\b/i;
+
+  function hash(s) { let h = 0; s = String(s); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
+  function pick(list, seed) { return list[hash(seed) % list.length]; }
+
+  return { NICHES, GOALS, LESSONS, CHEAT_RE, hash, pick };
 });

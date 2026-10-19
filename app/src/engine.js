@@ -105,7 +105,7 @@
     const gated = cfg.anti_gaming.gated_sources.includes(opts.source);
     if (gated && typeof opts.score === 'number' && opts.score < cfg.anti_gaming.min_quality_score) {
       amount = 0; notes.push('low_quality');
-    } else if (opts.source === 'idea' && opts.duplicate) {
+    } else if ((opts.source === 'idea' || opts.source === 'board') && opts.duplicate) {
       amount = 0; notes.push('duplicate');
     } else if (rule.min_words && (opts.words || 0) < rule.min_words) {
       amount = 0; notes.push('too_short');
@@ -116,6 +116,11 @@
         amount += rule.bonus; notes.push('quality_bonus');
       }
       if (opts.source === 'post' && opts.hitsWeeklyGoal) { amount += rule.bonus; notes.push('weekly_goal_bonus'); }
+    }
+
+    if (rule.max_per_day && amount > 0) {
+      const today = state.ledger.filter(e => e.day === day && e.source_type === opts.source && e.amount > 0 && !e.reverses).length;
+      if (today >= rule.max_per_day) { amount = 0; notes.push('daily_limit'); }
     }
 
     if (cfg.capped_sources.includes(opts.source) && amount > 0) {
@@ -337,7 +342,10 @@
         viewsUpdatedAt: null, note: '', source: 'manual', verified: false, loggedOn: localDay(when)
       });
     });
-    state.v = Math.max(state.v || 0, 2);
+    // v3: the blackboard (a freeform note, sticky cards and the notes saved for XP).
+    const b = state.board && typeof state.board === 'object' ? state.board : {};
+    state.board = { text: typeof b.text === 'string' ? b.text : '', cards: Array.isArray(b.cards) ? b.cards : [], saves: Array.isArray(b.saves) ? b.saves : [] };
+    state.v = Math.max(state.v || 0, 3);
     return state;
   }
 
@@ -460,6 +468,19 @@
     return BADGES.map(b => ({ id: b.id, name: b.name, desc: b.desc, earned: !!b.test(ctx) }));
   }
 
+  /* Example perks with locked/unlocked state from level and tier. Unlocked needs every condition set. */
+  function perks(state, cfg) {
+    const level = levelFor(totalXP(state), cfg).level;
+    const ids = cfg.tiers.map(t => t.id);
+    const tierIndex = tier(state, cfg).index;
+    return (cfg.perks || []).map(p => {
+      const tierName = p.tier ? (cfg.tiers.find(t => t.id === p.tier) || {}).name || p.tier : '';
+      const need = [p.level ? `Level ${p.level}` : '', p.tier ? `${tierName} tier` : ''].filter(Boolean).join(' and ');
+      const unlocked = (p.level == null || level >= p.level) && (p.tier == null || tierIndex >= ids.indexOf(p.tier));
+      return { id: p.id, name: p.name, desc: p.desc, unlock: need, unlocked };
+    });
+  }
+
   // ---------- weekly league (simulated cohort until real users exist) ----------
 
   function seeded(seed) {
@@ -495,6 +516,6 @@
   return {
     localDay, addDays, weekStart, uid, tokens, cosine, isDuplicateIdea, isRepeatRep,
     award, reverse, isReversed, totalXP, weeklyXP, xpBetween, practiceXPOn, levelFor,
-    dailyStreak, hoursLeftToday, toMinutes, minutesOfDay, validatePost, setPostViews, setPostPlatform, postsInWeek, postNeedingViews, postInsights, engagementInsights, migrate, quietWindow, isQuietAt, isQuiet, streakRiskStart, reminderMinutes, skills, tier, badges, league, recentAverageScore
+    dailyStreak, hoursLeftToday, toMinutes, minutesOfDay, validatePost, setPostViews, setPostPlatform, postsInWeek, postNeedingViews, postInsights, engagementInsights, migrate, quietWindow, isQuietAt, isQuiet, streakRiskStart, reminderMinutes, skills, tier, perks, badges, league, recentAverageScore
   };
 });

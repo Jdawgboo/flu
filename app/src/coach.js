@@ -8,8 +8,7 @@
 
   const NAME = 'Kavi';
 
-  function hash(s) { let h = 0; s = String(s); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
-  function pick(list, seed) { return list[hash(seed) % list.length]; }
+  const pick = Content.pick;
 
   const SKILL_LABEL = {
     en: { hooks: 'Hooks', retention: 'Retention and pacing', confidence: 'On-camera confidence', editing: 'Editing', storytelling: 'Storytelling', niche: 'Niche and consistency' },
@@ -111,7 +110,7 @@
   }
 
   const INTENTS = [
-    { re: /\b(buy|bought|purchase|fake|kharid)\w*\b.{0,24}\b(follower|view|like|subscriber|comment)|\bpaid (follower|view|like|subscriber)|\b(follower|view|like|subscriber)s?\b.{0,20}\b(buy|purchase|kharid|khareed)|follow ?(for|4) ?follow|\bf4f\b|\bl4l\b|engagement pods?|\bbots?\b/i, key: 'cheat' },
+    { re: Content.CHEAT_RE, key: 'cheat' },
     { re: /\bhook|first line|opening|shuru/i, key: 'hook' },
     { re: /(no|low|less|kam|zero|not getting( any)?) (views|reach|likes)|(views|reach|likes) (are|is) (so )?(low|bad|dead|down)|views? (nahi|kam)|nobody (watches|sees)|flop/i, key: 'lowviews' },
     { re: /what'?s working|what is working|\bviews?\b|\bstats?\b|analytics|performance|kya (chal|kaam)/i, key: 'stats' },
@@ -122,7 +121,7 @@
     { re: /(camera|shy|nervous|face|confiden|darr|sharam)/i, key: 'camera' },
     { re: /(edit|capcut|cuts|caption|transition)/i, key: 'editing' },
     { re: /(instagram|youtube|connect|creator account|business account)/i, key: 'connect' },
-    { re: /(hi|hello|hey|namaste|yo)\b/i, key: 'hello' }
+    { re: /\b(hi|hello|hey|namaste|yo)\b/i, key: 'hello' }
   ];
 
   const REPLIES = {
@@ -181,6 +180,12 @@
     return lines.join(' ');
   }
 
+  // The topic key chat() would answer a message with, or null when it would use the fallback.
+  function intentOf(message) {
+    const i = INTENTS.find(x => x.re.test(String(message || '')));
+    return i ? i.key : null;
+  }
+
   function chat(profile, message, ctx) {
     const lang = L(profile);
     const n = Content.NICHES[profile.niche] || Content.NICHES.other;
@@ -191,5 +196,5 @@
     return r;
   }
 
-  return { NAME, dailyBrief, react, chat, postNudge, fmtNum, platformName, SKILL_LABEL };
+  return { NAME, dailyBrief, react, chat, intentOf, postNudge, fmtNum, platformName, SKILL_LABEL };
 });

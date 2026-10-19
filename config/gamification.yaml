@@ -12,14 +12,16 @@ xp:
   post:      { base: 100, bonus: 50 }                      # Phase 2, bonus when it hits the weekly goal
   reflection: { base: 20, min_words: 15 }                  # Phase 2
   lesson:    { base: 15 }
+  # Blackboard note you write yourself. Gated like ideas: too short, gibberish or a near-copy of an earlier note earns 0 XP.
+  board:     { base: 8, min_words: 8, max_per_day: 3 }
 
 # Practice actions share this daily cap. Posting and reflection XP are never capped.
 daily_practice_cap: 300
-capped_sources: [idea, hook, rewrite, script, clip, review, lesson]
+capped_sources: [idea, hook, rewrite, script, clip, review, lesson, board]
 
 anti_gaming:
   min_quality_score: 4          # below this a gated source earns 0 XP
-  gated_sources: [idea, hook, rewrite, script]
+  gated_sources: [idea, hook, rewrite, script, board]
   duplicate_similarity: 0.9     # cosine similarity to a past idea that counts as a duplicate
 
 streaks:
@@ -62,6 +64,15 @@ tiers:
   - { id: rising,     name: Rising,     rule: "One post with 1,000+ views, or 100+ followers", min_best_views: 1000, min_followers: 100 }
   - { id: breakout,   name: Breakout,   rule: "One post with 10,000+ views, or 1,000+ followers", min_best_views: 10000, min_followers: 1000 }
   - { id: gig_ready,  name: Gig-ready,  rule: "Breakout + Consistent + average AI score of 7+ across your last 10 reps", min_avg_score: 7, avg_over_reps: 10 }
+
+# Placeholder perks, labelled as examples in the app (no real sponsors yet). A perk unlocks when
+# every condition it lists is met: `level` is the minimum level, `tier` the minimum tier id.
+perks:
+  - { id: starter_kit,   name: "Example: Creator starter kit",        desc: "Templates and a shot list pack", level: 3 }
+  - { id: cafe_voucher,  name: "Example: Cafe voucher",               desc: "A coffee on us for a shoot day", level: 5 }
+  - { id: gear_discount, name: "Example: Camera gear discount",       desc: "A partner discount on tripods and lights", tier: rising }
+  - { id: workshop,      name: "Example: Brand workshop invite",      desc: "A live session on pitching brands", tier: breakout }
+  - { id: gig_preview,   name: "Example: First paid gig preview",     desc: "See paid briefs before they open", tier: gig_ready }
 
 notifications:
   max_per_day: 2

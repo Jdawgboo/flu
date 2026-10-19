@@ -119,7 +119,7 @@ async function layout(page, label) {
     if (bar) {
       const top = bar.getBoundingClientRect().top;
       const screen = document.querySelector('#app .screen');
-      const items = screen ? [...screen.querySelectorAll('*')].filter(e => { if (hiddenInDetails(e)) return false; const b = e.getBoundingClientRect(); return b.height > 0 && b.width > 0 && getComputedStyle(e).visibility !== 'hidden'; }) : [];
+      const items = screen ? [...screen.querySelectorAll('*')].filter(e => { if (hiddenInDetails(e)) return false; if (e.closest('.chat.scroll') && !e.matches('.chat.scroll')) return false; /* clipped by its own scroll box */ const b = e.getBoundingClientRect(); return b.height > 0 && b.width > 0 && getComputedStyle(e).visibility !== 'hidden'; }) : [];
       const bottom = Math.max(0, ...items.map(e => e.getBoundingClientRect().bottom));
       out.barTop = top; out.contentBottom = bottom;
     }
@@ -493,8 +493,8 @@ async function fullRun(scheme) {
     await page.evaluate(() => window.LIApp.setNow(null));
   });
 
-  await step(`${tag}: coach chat and quick replies`, async () => {
-    await act(page, 'tab', '[data-tab="coach"]');
+  await step(`${tag}: home chat and quick replies`, async () => {
+    await act(page, 'tab', '[data-tab="home"]');
     await page.waitForSelector('#chat .msg.coach');
     const n0 = await page.locator('#chat .msg').count();
     await page.click('[data-action="quick"][data-q="Can I buy followers?"]');
@@ -505,9 +505,9 @@ async function fullRun(scheme) {
     await page.waitForFunction(n => document.querySelectorAll('#chat .msg').length === n + 4, n0);
     assert.match(await page.locator('#chat .msg.coach').last().textContent(), /6 to 15 words/);
     assert.equal(await page.inputValue('[data-bind="chatText"]'), '');
-    for (const q of ['What should I post today?', 'My views are low', 'When should I post?', 'How do brand deals work?']) await page.click(`[data-action="quick"][data-q="${q}"]`);
-    await layout(page, 'coach');
-    await shot(page, `${tag}-11-coach`);
+    for (const q of ['My views are low', 'When should I post?', 'How do brand deals work?']) await page.click(`[data-action="quick"][data-q="${q}"]`);
+    await layout(page, 'home-chat');
+    await shot(page, `${tag}-11-home-chat`);
   });
 
   await step(`${tag}: You tab tiers, skills, badges, settings`, async () => {
@@ -540,13 +540,13 @@ async function fullRun(scheme) {
     assert.equal((await S(page)).profile.niche, 'travel');
     await page.click('[data-action="set"][data-key="language"][data-val="hinglish"]');
     assert.equal((await S(page)).profile.language, 'hinglish');
-    await act(page, 'tab', '[data-tab="coach"]');
+    await act(page, 'tab', '[data-tab="home"]');
     await page.fill('[data-bind="chatText"]', 'how do I write a better hook?');
     await page.press('[data-bind="chatText"]', 'Enter');
     await page.waitForTimeout(100);
     assert.match(await page.locator('#chat .msg.coach').last().textContent(), /bolo|rakho|karo/);
-    await act(page, 'tab', '[data-tab="home"]');
-    assert.match(await page.locator('.card.hero').textContent(), /hai|karo|ho gaya/i, 'Hinglish brief');
+    assert.match(await page.locator('#chat .msg.brief').textContent(), /hai|karo|ho gaya/i, 'Hinglish brief');
+    assert.match(await page.locator('#today-card').textContent(), /tumhare|hain|karo/i, 'Hinglish today card');
     await act(page, 'tab', '[data-tab="practice"]');
     await act(page, 'open-rep', '[data-type="hook"]');
     await page.fill('[data-bind="hook0"]', 'Some travel tips');
@@ -616,8 +616,6 @@ async function fullRun(scheme) {
     await act(page, 'tab', '[data-tab="you"]');
     await layout(page, 'demo-you');
     await shot(page, `${tag}-16-you`);
-    await act(page, 'tab', '[data-tab="coach"]');
-    await layout(page, 'demo-coach');
     await act(page, 'tab', '[data-tab="practice"]');
     await layout(page, 'demo-practice');
   });
@@ -695,7 +693,7 @@ async function artifactRun(scheme) {
     await shot(page, `artifact-${scheme}-welcome`);
     await frame.locator('[data-action="demo"]').click();
     await frame.locator('.tabbar').waitFor();
-    for (const t of ['ideas', 'practice', 'coach', 'you', 'home']) {
+    for (const t of ['ideas', 'practice', 'you', 'home']) {
       await frame.locator(`.tabbar [data-action="tab"][data-tab="${t}"]`).click();
     }
     await frame.locator('.tabbar [data-action="tab"][data-tab="practice"]').click();
@@ -925,7 +923,7 @@ async function v020Checks() {
     await page.reload();
     await page.waitForSelector('.tabbar');
     let st = await S(page);
-    assert.equal(st.v, 2);
+    assert.equal(st.v, 3);
     const posted = st.ideas.filter(i => i.stage === 'posted');
     assert.equal(st.posts.length, posted.length);
     assert.equal(st.posts[0].platform, null);
@@ -976,7 +974,7 @@ async function v020Checks() {
     const st = await S(page);
     assert.equal(st.posts[0].views, 640);
     assert.equal(total(st), xp0);
-    await act(page, 'tab', '[data-tab="coach"]');
+    await act(page, 'tab', '[data-tab="home"]');
     await page.click('[data-action="quick"][data-q="What\'s working?"]');
     assert.match(await page.locator('.msg.coach').last().textContent(), /Your best: Instagram Reel, 2,650 views|Your best: YouTube Short|Your best:/);
     await page.evaluate(() => window.LIApp.setNow(null));
@@ -1224,12 +1222,259 @@ async function v030Checks() {
   });
 }
 
+// ---------- 0.4.0: Home chat studio, today card, voice, blackboard, perks ----------
+async function v040Checks() {
+  console.log('\n== 0.4.0 ==');
+  const send = async (page, text) => { await page.fill('[data-bind="chatText"]', text); await page.press('[data-bind="chatText"]', 'Enter'); };
+  const IDEA_TEXT = 'A reel about my ₹80 dosa at the hostel canteen near campus';
+
+  for (const scheme of ['light', 'dark']) {
+    const { context, page, errors } = await demoPhone(scheme);
+    const tag = `0.4.0 ${scheme}`;
+
+    await step(`${tag}: tabs are Home, Ideas, Practice, You and Home holds the pinned card, chat and week`, async () => {
+      const labels = await page.locator('.tabbar .tab').allTextContents();
+      assert.deepEqual(labels.map(x => x.trim()), ['Home', 'Ideas', 'Practice', 'You']);
+      const order = await page.evaluate(() => ['#today-card', '#chat', '[data-bind="chatText"]', '#board-card', '#post-nudge, .card:has([data-action="log-post-open"])'].map(q => document.querySelector(q).getBoundingClientRect().top));
+      assert.deepEqual([...order].sort((a, b) => a - b), order, 'today, chat, composer, then your week');
+      assert.equal(await page.locator('form').count(), 0);
+      assert.ok(await page.locator('[data-action="voice"][data-target="chatText"]').count(), 'mic always rendered on Home');
+      assert.equal(await page.locator('#chat .msg.brief').count(), 1);
+      assert.ok(await page.locator('.quick [data-q="I\'m stuck"]').count() && await page.locator('.quick [data-q="Plan a shoot with friends"]').count() && await page.locator('.quick [data-q="What should I post today?"]').count());
+      await layout(page, 'home-0.4.0');
+      await shot(page, `${scheme}-040-home`);
+    });
+
+    await step(`${tag}: #today-card shows the format, platform and gap for the demo profile`, async () => {
+      const txt = await page.locator('#today-card').textContent();
+      assert.match(await page.locator('#today-format').textContent(), /^Post a (Reel|Carousel|Post|Short)/);
+      assert.match(txt, /Instagram|YouTube/);
+      assert.match(await page.locator('#today-gap').textContent(), /^Last post: (today|\d+ days? ago)$/);
+      assert.match(txt, /posts you reported|imported Instagram posts/);
+      assert.ok(await page.locator('#today-card [data-action="prompt-hooks"]').count() && await page.locator('#today-card [data-action="prompt-idea"]').count());
+    });
+
+    await step(`${tag}: a typed idea renders six studio cards, no overflow; AI output earns 0 XP; Save idea uses the idea XP path`, async () => {
+      const xp0 = total(await S(page)), ideas0 = (await S(page)).ideas.length;
+      await send(page, IDEA_TEXT);
+      await page.waitForFunction(() => document.querySelectorAll('.studio-set .studio-card').length === 6);
+      const agents = await page.locator('.studio-card').evaluateAll(els => els.map(e => e.dataset.agent));
+      assert.deepEqual(agents, ['strategist', 'instagram', 'thread', 'linkedin', 'board', 'critic']);
+      assert.equal(await page.locator('#thinking').count(), 0);
+      assert.equal(await page.inputValue('[data-bind="chatText"]'), '');
+      assert.match(await page.locator('.studio-card[data-agent="linkedin"]').textContent(), /\?/, 'closing question');
+      assert.ok(await page.locator('.studio-card[data-agent="critic"] [data-verdict]').count());
+      const mid = await S(page);
+      assert.equal(total(mid), xp0, 'AI-written output earns no XP');
+      assert.equal(mid.ideas.length, ideas0);
+      assert.equal(mid.reps.length, (await S(page)).reps.length);
+      await layout(page, 'studio-cards');
+      await shot(page, `${scheme}-040-studio`);
+      await page.locator('[data-action="studio-save"]').last().click();
+      const st = await S(page);
+      assert.equal(st.ideas.length, ideas0 + 1);
+      assert.equal(st.ideas[0].text, IDEA_TEXT);
+      assert.equal(st.ideas[0].source, 'chat');
+      const entry = st.ledger[st.ledger.length - 1];
+      assert.equal(entry.source_type, 'idea');
+      assert.equal(total(st), xp0 + entry.amount);
+      assert.equal(await page.locator('[data-action="studio-save"]').count(), 0, 'save button is replaced once saved');
+      assert.ok(await page.locator('[data-action="idea-rep"][data-type="hook"]').count());
+    });
+
+    await step(`${tag}: stuck and group chips render cards; today highlights the pinned card; practice opens a rep`, async () => {
+      await page.click('[data-action="quick"][data-q="I\'m stuck"]');
+      await page.locator('.plan-card[data-kind="stuck"]').waitFor();
+      assert.equal(await page.locator('.plan-card[data-kind="stuck"] li').count(), 3);
+      assert.match(await page.locator('.plan-card[data-kind="stuck"] [data-action="open-rep"]').textContent(), /60-second hook rep/);
+      await page.click('[data-action="quick"][data-q="Plan a shoot with friends"]');
+      await page.locator('.plan-card[data-kind="group"]').waitFor();
+      assert.match(await page.locator('.plan-card[data-kind="group"]').textContent(), /Shoot plan for 3 people/);
+      await send(page, 'plan a shoot with 5 of us');
+      await page.waitForFunction(() => document.querySelectorAll('.plan-card[data-kind="group"]').length === 2);
+      assert.match(await page.locator('.plan-card[data-kind="group"]').last().textContent(), /for 5 people/);
+      await layout(page, 'plan-cards');
+      await page.click('[data-action="quick"][data-q="What should I post today?"]');
+      await page.waitForSelector('#today-card.flash');
+      const top = await page.locator('#today-card').evaluate(e => e.getBoundingClientRect().top);
+      assert.ok(top >= 0 && top < 844, 'today card scrolled into view');
+      await send(page, 'I want to practise hooks');
+      await page.waitForSelector('[data-action="submit-rep"]');
+      assert.equal((await page.evaluate(() => window.LIApp.ui().view)).type, 'hook');
+      await act(page, 'tab', '[data-tab="home"]');
+    });
+
+    await step(`${tag}: Hinglish idea gives a Hinglish studio card`, async () => {
+      await send(page, 'yaar mera dosa kya mast hai aur sab ko pasand hai');
+      await page.waitForFunction(() => document.querySelectorAll('.studio-set').length === 2);
+      const set = page.locator('.studio-set').last();
+      assert.equal(await set.getAttribute('data-lang'), 'hi');
+      assert.match(await set.locator('[data-agent="instagram"]').textContent(), /karo|mein|tum|dekho/i);
+      assert.match(await set.locator('[data-agent="linkedin"]').textContent(), /karo|batao|mein/i);
+      await layout(page, 'studio-hinglish');
+    });
+
+    await step(`${tag}: a cheat message is refused by the coach and never reaches the studio`, async () => {
+      await send(page, 'buy 5000 followers for my reel');
+      await page.locator('#chat .msg.coach').last().waitFor();
+      assert.match(await page.locator('#chat .msg.coach').last().textContent(), /will not help/i);
+    });
+
+    await step(`${tag}: blackboard: notes earn config XP once and only for your own words; cards add, edit, move, delete`, async () => {
+      const B = await page.evaluate(() => window.LI_CONFIG.xp.board);
+      await page.click('[data-action="board-open"]');
+      await page.waitForSelector('#board-text');
+      const xp0 = total(await S(page));
+      await page.fill('#board-text', 'film the chai stall');
+      await act(page, 'board-save');
+      assert.equal(total(await S(page)), xp0, 'short note earns nothing');
+      assert.match(await toastText(page), /under \d+ words/);
+      const note = 'Film the chai stall at sunrise, then compare it with the cafe across the road';
+      await page.fill('#board-text', note);
+      assert.match(await page.textContent('#board-words'), /\d+ words/);
+      await act(page, 'board-save');
+      let st = await S(page);
+      assert.equal(total(st), xp0 + B.base);
+      assert.equal(st.ledger[st.ledger.length - 1].source_type, 'board');
+      await act(page, 'board-save');
+      assert.equal(total(await S(page)), xp0 + B.base, 'saving the same note again earns nothing');
+      // cards
+      await act(page, 'board-add'); await act(page, 'board-add');
+      await page.locator('[data-card-text]').nth(0).fill('first card');
+      await page.locator('[data-card-text]').nth(1).fill('second card');
+      await page.locator('[data-action="board-move"][data-dir="-1"]').nth(1).click();
+      st = await S(page);
+      assert.deepEqual(st.board.cards.map(c => c.text), ['second card', 'first card']);
+      await layout(page, 'blackboard');
+      await shot(page, `${scheme}-040-board`);
+      await page.reload();
+      await page.waitForSelector('.tabbar');
+      st = await S(page);
+      assert.equal(st.board.text, note);
+      assert.equal(st.board.cards.length, 2);
+      assert.equal(st.board.saves.length, 3);
+      await act(page, 'board-open');
+      await page.locator('[data-action="board-del"]').first().click();
+      assert.equal((await S(page)).board.cards.length, 1);
+      assert.equal(total(await S(page)), xp0 + B.base, 'cards earn nothing');
+      await act(page, 'back');
+    });
+
+    await step(`${tag}: studio Open on blackboard adds AI cards with no XP`, async () => {
+      await send(page, 'Sunday filter coffee at the old station canteen');
+      await page.waitForFunction(() => document.querySelectorAll('.studio-set').length === 3);
+      const xp0 = total(await S(page)), n0 = (await S(page)).board.cards.length;
+      await page.locator('[data-action="board-from-studio"]').last().click();
+      await page.waitForSelector('#stickies');
+      const st = await S(page);
+      assert.equal(st.board.cards.length, n0 + (await page.evaluate(() => window.LI_CONFIG.app.studio.board_tiles)));
+      assert.ok(st.board.cards.slice(n0).every(c => c.ai));
+      assert.equal(total(st), xp0);
+      await act(page, 'back');
+    });
+
+    await step(`${tag}: perks shelf on You is labelled as examples and follows level and tier`, async () => {
+      await act(page, 'tab', '[data-tab="you"]');
+      const perks = page.locator('#perks');
+      assert.match(await perks.textContent(), /Coming soon/);
+      assert.match(await perks.textContent(), /no real sponsors/i);
+      const states = await perks.locator('[data-perk]').evaluateAll(els => els.map(e => [e.dataset.perk, e.dataset.unlocked]));
+      assert.equal(states.length, await page.evaluate(() => window.LI_CONFIG.perks.length));
+      const expected = await page.evaluate(() => window.LIEngine.perks(window.LIApp.state(), window.LI_CONFIG).map(p => [p.id, String(p.unlocked)]));
+      assert.deepEqual(states, expected);
+      await page.evaluate(() => { const st = window.LIApp.state(); st.ledger.push({ id: 'xp-perk', amount: 5000, reason: 'idea', notes: [], source_type: 'idea', source_id: null, created_at: new Date().toISOString(), day: window.LIEngine.localDay(Date.now()) }); window.LIApp.render(); });
+      assert.ok(await perks.locator('[data-unlocked="true"]').count() >= 2, 'level perks unlock');
+      assert.ok(await perks.locator('[data-unlocked="false"]').count() >= 1, 'tier perks stay locked');
+      await layout(page, 'you-perks');
+      await shot(page, `${scheme}-040-perks`, true);
+    });
+
+    await step(`${tag}: export includes the blackboard; delete clears it`, async () => {
+      await act(page, 'export');
+      const parsed = JSON.parse(await page.locator('[data-select-all]').inputValue());
+      assert.ok(parsed.board && parsed.board.saves.length >= 1 && parsed.board.cards.length >= 1);
+      await act(page, 'delete'); await act(page, 'delete-yes');
+      const st = await S(page);
+      assert.deepEqual(st.board, { text: '', cards: [], saves: [] });
+    });
+
+    await step(`${tag}: no console errors`, async () => assert.deepEqual(errors.filter(e => !/fonts|ERR_INTERNET_DISCONNECTED/.test(e)), []));
+    await context.close();
+  }
+
+  // Voice: no SpeechRecognition at all.
+  {
+    const ph = await newPhone('light');
+    await ph.context.addInitScript(() => { delete window.SpeechRecognition; delete window.webkitSpeechRecognition; });
+    await ph.page.goto(BASE + '/');
+    await ph.page.waitForSelector('[data-action="demo"]');
+    await act(ph.page, 'demo');
+    await ph.page.waitForSelector('.tabbar');
+    await closeModals(ph.page);
+    await step('0.4.0: with no SpeechRecognition the mic shows the hint and focuses the input', async () => {
+      assert.equal(await ph.page.evaluate(() => 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window), false);
+      assert.equal(await ph.page.locator('#mic-hint').count(), 0);
+      await ph.page.click('[data-action="voice"][data-target="chatText"]');
+      await ph.page.waitForSelector('#mic-hint');
+      assert.equal((await ph.page.textContent('#mic-hint')).trim(), "Voice typing isn't supported here. Tap the keyboard's mic or type.");
+      assert.equal(await ph.page.evaluate(() => document.activeElement && document.activeElement.dataset.bind), 'chatText');
+      await layout(ph.page, 'mic-hint');
+      await send(ph.page, 'hi');
+      assert.equal(await ph.page.locator('#mic-hint').count(), 0, 'hint clears on send');
+    });
+    await step('0.4.0: no console errors without SpeechRecognition', async () => assert.deepEqual(ph.errors.filter(e => !/fonts|ERR_INTERNET_DISCONNECTED/.test(e)), []));
+    await ph.context.close();
+  }
+
+  // Voice: a stub SpeechRecognition that answers, and one that errors.
+  for (const mode of ['result', 'error']) {
+    const ph = await newPhone('light');
+    await ph.context.addInitScript(m => {
+      window.__srLang = null;
+      window.SpeechRecognition = class {
+        start() {
+          window.__srLang = this.lang;
+          setTimeout(() => {
+            if (m === 'result') this.onresult && this.onresult({ results: [[{ transcript: 'make a reel about my chai stall' }]] });
+            else this.onerror && this.onerror({ error: 'not-allowed' });
+            setTimeout(() => this.onend && this.onend(), 10);
+          }, 30);
+        }
+      };
+    }, mode);
+    await ph.page.goto(BASE + '/');
+    await ph.page.waitForSelector('[data-action="demo"]');
+    await act(ph.page, 'demo');
+    await ph.page.waitForSelector('.tabbar');
+    await closeModals(ph.page);
+    await step(`0.4.0: voice ${mode}`, async () => {
+      await ph.page.click('[data-action="voice"][data-target="chatText"]');
+      if (mode === 'result') {
+        await ph.page.waitForFunction(() => document.querySelector('[data-bind="chatText"]').value === 'make a reel about my chai stall');
+        assert.equal(await ph.page.evaluate(() => window.__srLang), 'en-IN');
+        await ph.page.waitForFunction(() => !window.LIApp.ui().listening);
+        assert.equal(await ph.page.inputValue('[data-bind="chatText"]'), 'make a reel about my chai stall', 'draft survives the re-render');
+        assert.equal(await ph.page.locator('#mic-hint').count(), 0);
+        assert.equal(await ph.page.locator('.studio-card').count(), 0, 'nothing is sent until you tap Send');
+        await act(ph.page, 'chat');
+        await ph.page.waitForFunction(() => document.querySelectorAll('.studio-set .studio-card').length === 6);
+      } else {
+        await ph.page.waitForSelector('#mic-hint');
+        assert.equal(await ph.page.evaluate(() => document.activeElement && document.activeElement.dataset.bind), 'chatText');
+      }
+    });
+    await step(`0.4.0: voice ${mode}: no console errors`, async () => assert.deepEqual(ph.errors.filter(e => !/fonts|ERR_INTERNET_DISCONNECTED/.test(e)), []));
+    await ph.context.close();
+  }
+}
+
 try {
   await fullRun('light');
   await fullRun('dark');
   await streakMilestones();
   await v020Checks();
   await v030Checks();
+  await v040Checks();
   await artifactRun('light');
   await artifactRun('dark');
   await storageBlocked();

@@ -12,9 +12,11 @@ export const Grader = require(path.join(root, 'app/src/grader.js'));
 export const Coach = require(path.join(root, 'app/src/coach.js'));
 export const Content = require(path.join(root, 'app/src/content.js'));
 export const Instagram = require(path.join(root, 'app/src/instagram.js'));
+export const Studio = require(path.join(root, 'app/src/studio.js'));
+export const Router = require(path.join(root, 'app/src/router.js'));
 
-function loadConfig() {
-  const text = readFileSync(path.join(root, 'config/gamification.yaml'), 'utf8');
+function loadConfig(file = 'gamification.yaml') {
+  const text = readFileSync(path.join(root, 'config', file), 'utf8');
   try {
     return require('js-yaml').load(text);
   } catch (e) {
@@ -25,6 +27,7 @@ function loadConfig() {
   }
 }
 export const cfg = loadConfig();
+export const appCfg = loadConfig('app.yaml');
 
 export function freshState() {
   return { ledger: [], ideas: [], reps: [], posts: [], lessonsDone: [], profile: { name: 'Test User', niche: 'food', language: 'english' } };

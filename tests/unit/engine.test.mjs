@@ -592,7 +592,7 @@ describe('self-reported posts', () => {
     ];
     s.posts = [{ id: 'old', ideaId: 'c', date: '2026-10-11', platform: 'youtube', source: 'manual' }];
     E.migrate(s);
-    assert.equal(s.v, 2);
+    assert.equal(s.v, 3);
     assert.equal(s.posts.length, 2);
     const made = s.posts.find(p => p.ideaId === 'a');
     assert.deepEqual({ ...made, id: undefined }, { id: undefined, ideaId: 'a', date: '2026-10-10', platform: null, format: '', views: null, viewsUpdatedAt: null, note: '', source: 'manual', verified: false, loggedOn: '2026-10-10' });
@@ -606,7 +606,7 @@ describe('self-reported posts', () => {
     const s = { ideas: [], ledger: [] };
     E.migrate(s);
     assert.deepEqual(s.posts, []);
-    assert.equal(s.v, 2);
+    assert.equal(s.v, 3);
   });
 });
 
@@ -742,5 +742,60 @@ describe('imported Instagram data', () => {
     assert.equal(r.best.score, 330);
     // imported posts have no views, so views-based insights ignore them
     assert.equal(E.postInsights(s, cfg, now).groups.length, 0);
+  });
+});
+
+describe('blackboard XP and perks', () => {
+  const day = '2026-10-19';
+  const board = (s, text, n = 0, extra = {}) => E.award(s, cfg, { source: 'board', sourceId: 'b' + n, score: 10, words: text.split(/\s+/).length, duplicate: E.isDuplicateIdea(text, s.board ? s.board.saves : [], cfg), now: at(day, 9 + n), ...extra });
+  const TEXTS = ['shoot the chai stall reel at sunrise before the crowd arrives', 'compare three momos places near campus using one rule only', 'story about my first failed recipe and what i changed after', 'tripod hack using a water bottle and a rubber band at home'];
+
+  test('config values: board pays base XP, is capped, gated and limited per day', () => {
+    assert.deepEqual(cfg.xp.board, { base: 8, min_words: 8, max_per_day: 3 });
+    assert.ok(cfg.capped_sources.includes('board') && cfg.anti_gaming.gated_sources.includes('board'));
+  });
+  test('a note with enough words earns the configured XP and counts for the streak day', () => {
+    const s = freshState();
+    const e = board(s, TEXTS[0]);
+    assert.equal(e.amount, cfg.xp.board.base);
+    assert.equal(E.dailyStreak(s, cfg, at(day)).activeToday, true);
+  });
+  test('too short, gibberish and the daily limit earn 0', () => {
+    const s = freshState();
+    assert.deepEqual([board(s, 'short note here').amount, board(s, 'short note here', 1).notes], [0, ['too_short']]);
+    assert.deepEqual(board(s, TEXTS[0], 2, { score: 1 }).notes, ['low_quality']);
+    for (let i = 0; i < cfg.xp.board.max_per_day; i++) assert.equal(board(s, TEXTS[i], 3 + i).amount, cfg.xp.board.base, 'note ' + i);
+    const over = board(s, TEXTS[3], 7);
+    assert.equal(over.amount, 0);
+    assert.ok(over.notes.includes('daily_limit'));
+  });
+  test('a near-copy of an earlier saved note earns 0', () => {
+    const s = freshState();
+    s.board = { text: '', cards: [], saves: [{ id: 'b0', text: TEXTS[0] }] };
+    const e = board(s, TEXTS[0], 1);
+    assert.equal(e.amount, 0);
+    assert.deepEqual(e.notes, ['duplicate']);
+  });
+  test('migrate adds the board and keeps what is there', () => {
+    const s = E.migrate({ ledger: [], ideas: [], posts: [] });
+    assert.deepEqual(s.board, { text: '', cards: [], saves: [] });
+    s.board.text = 'keep me';
+    assert.equal(E.migrate(s).board.text, 'keep me');
+  });
+  test('perks unlock by level and by tier, from config', () => {
+    assert.ok(cfg.perks.length >= 3 && cfg.perks.every(p => p.id && p.name && (p.level || p.tier)));
+    const s = freshState();
+    let p = E.perks(s, cfg);
+    assert.equal(p.length, cfg.perks.length);
+    assert.ok(p.every(x => !x.unlocked), 'nothing at level 1');
+    const lvl = cfg.perks.find(x => x.level);
+    s.ledger.push({ id: 'x', amount: cfg.levels.step * lvl.level * (lvl.level - 1) / 2, reason: 'idea', notes: [], source_type: 'idea', day, created_at: new Date(at(day)).toISOString() });
+    p = E.perks(s, cfg);
+    assert.equal(p.find(x => x.id === lvl.id).unlocked, true);
+    assert.equal(p.find(x => x.id === lvl.id).unlock, 'Level ' + lvl.level);
+    const t = cfg.perks.find(x => x.tier);
+    assert.equal(p.find(x => x.id === t.id).unlocked, false);
+    s.highestTier = t.tier;
+    assert.equal(E.perks(s, cfg).find(x => x.id === t.id).unlocked, true);
   });
 });

@@ -1,12 +1,14 @@
-/* LockIn Phase 1 app: onboarding, the daily loop, ideas, practice reps, coach chat and profile.
+/* LockIn Phase 1 app: onboarding, the Home chat with the studio, ideas, practice reps, blackboard and profile.
  * Renders into #app from template strings; every click goes through one delegated handler
  * keyed by data-action. State lives in localStorage ('lockin.v1') and falls back to memory
  * when storage is blocked. All XP numbers come from window.LI_CONFIG via LIEngine. */
 (function () {
   'use strict';
 
-  const E = window.LIEngine, C = window.LIContent, G = window.LIGrader, K = window.LICoach, IGM = window.LIInstagram;
+  const E = window.LIEngine, C = window.LIContent, G = window.LIGrader, K = window.LICoach, IGM = window.LIInstagram, ST = window.LIStudio, R = window.LIRouter;
   const cfg = window.LI_CONFIG;
+  const APP = cfg.app || {};
+  const SC = APP.studio;
   const KEY = 'lockin.v1';
   const STAGES = ['idea', 'hook', 'script', 'filmed', 'posted'];
   const STAGE_LABEL = { idea: 'Idea', hook: 'Hook', script: 'Script', filmed: 'Filmed', posted: 'Posted' };
@@ -38,8 +40,8 @@
 
   function fresh() {
     return {
-      v: 2, profile: null, ob: { step: 'welcome', data: {} },
-      ledger: [], reps: [], ideas: [], lessonsDone: [], chat: [], posts: [],
+      v: 3, profile: null, ob: { step: 'welcome', data: {} },
+      ledger: [], reps: [], ideas: [], lessonsDone: [], chat: [], posts: [], board: { text: '', cards: [], saves: [] },
       notif: { day: '', count: 0, sent: {} }, seenLevel: 1, highestTier: 'starter', leagueIndex: 0
     };
   }
@@ -58,7 +60,7 @@
   }
 
   let state = load();
-  const ui = { igBusy: false, igErr: '', confirmIg: false, editPost: null, tab: 'home', view: null, draft: {}, filter: 'all', err: '', otpSent: false, modals: [], confirmDelete: false, exportText: null, exportCopied: false, ideaConfirm: null, listening: false };
+  const ui = { igBusy: false, igErr: '', confirmIg: false, editPost: null, tab: 'home', view: null, draft: {}, filter: 'all', err: '', otpSent: false, modals: [], confirmDelete: false, exportText: null, exportCopied: false, ideaConfirm: null, listening: false, thinking: false, micHint: false, chatScroll: false };
 
   // ---------- helpers ----------
 
@@ -177,10 +179,10 @@
 
   function addIdea(text, source) {
     text = String(text || '').trim();
-    if (!text) { toast('Write your idea first'); return; }
+    if (!text) { toast('Write your idea first'); return null; }
     const before = snapshot();
     const { idea, entry } = makeIdea(state, text, source, now());
-    ui.draft.ideaText = '';
+    if (source !== 'chat') ui.draft.ideaText = '';
     save();
     celebrate(before);
     render();
@@ -188,6 +190,7 @@
     else if (entry.notes.includes('low_quality')) toast('Saved. Too vague for XP yet: ' + idea.feedback.fix);
     else if (entry.notes.includes('daily_cap') && !entry.amount) toast('Saved. Daily practice XP cap reached');
     else { toast(`Idea saved: ${idea.score}/10`); burst(entry.amount); }
+    return idea;
   }
 
   function noteText(note, type) {
@@ -198,6 +201,7 @@
       low_quality: `Scores under ${cfg.anti_gaming.min_quality_score} earn 0 XP. Use the fix and try again.`,
       duplicate: 'Too close to an idea you already have, so 0 XP.',
       too_short: 'Too short to earn XP.',
+      daily_limit: 'Daily limit for this kind of XP reached.',
       no_change: 'Same as before. Change it enough to score higher to earn XP.'
     }[note] || note;
   }
@@ -208,7 +212,6 @@
     home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>',
     ideas: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1.1 2l.1.7h4.8l.1-.7c.1-.8.5-1.5 1.1-2A6 6 0 0 0 12 3z"/>',
     practice: '<path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
-    coach: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01"/>',
     you: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'
   };
   const icon = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -224,10 +227,17 @@
     const root = document.getElementById('app');
     if (!root) return;
     const onboarded = state.profile && state.profile.onboarded;
+    const oldChat = document.getElementById('chat');
+    const keep = oldChat ? oldChat.scrollTop : null;
     root.innerHTML = (onboarded ? mainView() : onboardingView()) + modalView();
-    if (onboarded && ui.tab === 'coach' && !ui.view) {
-      const chat = document.getElementById('chat');
-      if (chat) window.scrollTo(0, document.body.scrollHeight);
+    const chat = document.getElementById('chat');
+    if (chat) {
+      // Keep the thread where it was; jump to the newest message after a send or on first show.
+      if (ui.chatScroll || keep == null) {
+        const last = chat.lastElementChild;
+        chat.scrollTop = ui.chatScroll === 'start' && last && last.classList.contains('studio-set') ? last.offsetTop - chat.offsetTop : chat.scrollHeight;
+      } else chat.scrollTop = keep;
+      ui.chatScroll = false;
     }
   }
 
@@ -481,12 +491,12 @@
   }
 
   function tabbar() {
-    const tabs = [['home', 'Home'], ['ideas', 'Ideas'], ['practice', 'Practice'], ['coach', 'Coach'], ['you', 'You']];
+    const tabs = [['home', 'Home'], ['ideas', 'Ideas'], ['practice', 'Practice'], ['you', 'You']];
     return `<div class="tabbar"><nav aria-label="Main">${tabs.map(([id, label]) => `<button class="tab" data-action="tab" data-tab="${id}" ${ui.tab === id && !ui.view ? 'aria-current="page"' : ''}>${icon(id)}<span>${label}</span></button>`).join('')}</nav></div>`;
   }
 
   function mainView() {
-    const body = ui.view ? subView() : { home: homeView, ideas: ideasView, practice: practiceView, coach: coachView, you: youView }[ui.tab]();
+    const body = ui.view ? subView() : { home: homeView, ideas: ideasView, practice: practiceView, you: youView }[ui.tab]();
     return body + tabbar();
   }
 
@@ -552,18 +562,21 @@
     const mins = Math.max(0, Math.floor(hoursLeft * 60));
     const nudge = K.postNudge(p, { posts: state.posts, weekCount: posted, goal, insights: E.postInsights(state, cfg, now()), today: E.localDay(now()), cfg });
     const due = E.postNeedingViews(state, cfg, now());
+    const tp = ST.todayPick(p, studioCtx());
 
     return `<section class="screen">${topbar()}
       ${atRisk ? `<div class="card warn" role="alert"><div class="row"><span style="font-size:24px" aria-hidden="true">⏳</span><div class="grow"><h3>Your ${s.current}-day streak is at risk</h3>
         <p class="small">${Math.floor(mins / 60)}h ${mins % 60}m left today.${s.freezes ? ' A freeze would cover it, but save it for a real off day.' : ' One quick rep keeps it alive.'}</p></div></div>
         <button class="btn gold block" data-action="open-rep" data-type="hook">Do a 1-minute rep</button></div>` : ''}
-      <div class="card hero">
-        <div class="coach-line"><div class="avatar" aria-hidden="true">${K.NAME[0]}</div><div class="grow"><span class="label">${esc(brief.coach)} · daily brief</span><p>${esc(brief.message)}</p></div></div>
-        <span class="label">Today's prompt</span>
-        <p class="prompt">${esc(brief.prompt)}</p>
-        <div class="row wrap"><button class="btn onbrand sm" data-action="prompt-hooks">Write hooks for this</button><button class="btn ghost sm" style="color:inherit;border-color:currentColor" data-action="prompt-idea">Save as idea</button></div>
-        <p class="small muted">Focus skill: <b>${esc(brief.focusLabel)}</b></p>
+      ${todayCard(brief, tp)}
+      <div class="chat scroll" id="chat" role="log" aria-label="Chat with ${esc(K.NAME)}"><div class="msg coach brief"><b>${esc(brief.coach)} · daily brief</b><br>${esc(brief.message)}</div>${state.chat.map(chatMsg).join('')}${ui.thinking ? '<div class="msg coach thinking" id="thinking" role="status">Thinking…</div>' : ''}</div>
+      <div class="quick" aria-label="Quick questions">${QUICK.map(q => `<button type="button" data-action="quick" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+      <div class="card tight composer-card">
+        <textarea rows="3" maxlength="${SC.max_input_chars}" autocomplete="off" enterkeyhint="send" data-bind="chatText" data-enter="chat" aria-label="Message to ${esc(K.NAME)}" placeholder="Tell ${esc(K.NAME)} an idea, ask anything, or say what you are stuck on">${esc(draft('chatText'))}</textarea>
+        ${ui.micHint ? `<p class="small muted" id="mic-hint" role="status">${MIC_HINT}</p>` : ''}
+        <div class="row"><button class="btn grow" data-action="chat">Send</button><button class="btn ghost mic" type="button" data-action="voice" data-target="chatText" aria-label="Talk to ${esc(K.NAME)}" aria-pressed="${ui.listening}">${ui.listening ? '● Listening' : '🎙️'}</button></div>
       </div>
+      <h2>Your week</h2>
       ${levelCard()}
       ${weekStrip()}
       <div class="card tight">
@@ -576,6 +589,8 @@
         ${idea ? `<p class="idea-text">${esc(idea.text)}</p>${track(idea)}<p class="small muted">Stage: ${STAGE_LABEL[idea.stage]}</p>${ideaNextAction(idea)}`
         : `<p class="muted">No open ideas. Save today's prompt or add your own.</p><button class="btn soft block" data-action="tab" data-tab="ideas">Add an idea</button>`}
       </div>
+      <div class="card tight" id="board-card"><div class="row between"><h3>Blackboard</h3><button class="btn soft sm" data-action="board-open">Open</button></div>
+        <p class="small muted">A notepad and sticky cards for your thinking. A note of ${cfg.xp.board.min_words}+ words that you write yourself earns +${cfg.xp.board.base} XP.</p></div>
       <div class="card tight"><div class="row between"><h3>Weekly posting goal</h3><span class="num">${posted}/${goal}</span></div>
         <div class="bar gold"><i style="width:${Math.min(100, Math.round(posted / goal * 100))}%"></i></div>
         ${nudge ? `<p class="small" id="post-nudge"><b>${esc(K.NAME)}:</b> ${esc(nudge)}</p>` : ''}
@@ -609,7 +624,7 @@
         <label class="field"><span>New idea</span><textarea rows="2" maxlength="280" data-bind="ideaText" data-enter="add-idea" placeholder="${esc(niche().prompts[1])}">${esc(draft('ideaText'))}</textarea></label>
         <div class="row">
           <button class="btn grow" data-action="add-idea">Save idea · ${xpRange('idea')}</button>
-          ${SR ? `<button class="btn ghost" type="button" data-action="voice" aria-label="Add by voice" aria-pressed="${ui.listening}">${ui.listening ? '● Listening' : '🎙️'}</button>` : ''}
+          ${SR ? `<button class="btn ghost" type="button" data-action="voice" data-target="ideaText" aria-label="Add by voice" aria-pressed="${ui.listening}">${ui.listening ? '● Listening' : '🎙️'}</button>` : ''}
         </div>
       </div>
       <div class="stages" role="group" aria-label="Filter by stage">
@@ -644,27 +659,37 @@
     </article>`;
   }
 
-  function startVoice() {
-    if (!SR) return;
+  // Voice typing into a draft field: "ideaText" on Ideas, "chatText" on Home.
+  function startVoice(target) {
+    target = target || 'ideaText';
+    const chat = target === 'chatText';
+    const unavailable = () => {
+      ui.listening = false;
+      if (chat) { ui.micHint = true; render(); focusChat(); }
+      else { render(); toast('Voice input is not available here. Type your idea instead.'); }
+    };
+    if (!SR) { unavailable(); return; }
     let rec;
     try {
       rec = new SR();
-      rec.lang = 'en-IN';
+      rec.lang = APP.speech_lang;
       rec.interimResults = false;
       rec.maxAlternatives = 1;
       rec.onresult = ev => {
         const text = ev.results && ev.results[0] && ev.results[0][0] ? ev.results[0][0].transcript : '';
-        ui.draft.ideaText = (draft('ideaText') ? draft('ideaText') + ' ' : '') + text;
-        ui.voiceUsed = true;
+        ui.draft[target] = (draft(target) ? draft(target) + ' ' : '') + text;
+        if (target === 'ideaText') ui.voiceUsed = true;
+        const box = document.querySelector(`[data-bind="${target}"]`);
+        if (box) box.value = ui.draft[target];
       };
-      rec.onerror = () => { ui.listening = false; render(); toast('Voice input is not available here. Type your idea instead.'); };
-      rec.onend = () => { ui.listening = false; render(); };
+      rec.onerror = unavailable;
+      rec.onend = () => { ui.listening = false; render(); if (chat && ui.micHint) focusChat(); };
       rec.start();
+      ui.micHint = false;
       ui.listening = true;
       render();
     } catch (e) {
-      ui.listening = false;
-      toast('Voice input is not available here. Type your idea instead.');
+      unavailable();
     }
   }
 
@@ -698,10 +723,54 @@
     if (v.kind === 'rep') return repView(v);
     if (v.kind === 'feedback') return feedbackView(v);
     if (v.kind === 'log-post') return logPostView(v);
+    if (v.kind === 'board') return boardView();
     if (v.kind === 'lessons') return lessonsView();
     if (v.kind === 'lesson') return lessonView(v);
     ui.view = null;
     return homeView();
+  }
+
+  // ---------- blackboard ----------
+
+  function boardView() {
+    const b = state.board;
+    const words = wordCount(b.text);
+    const R_ = cfg.xp.board;
+    const recent = b.saves.slice(0, 3);
+    return `<section class="screen">${backBar('Blackboard')}
+      <h1>Blackboard</h1>
+      <p class="muted small">Think out loud. Your own note of ${R_.min_words}+ words earns +${R_.base} XP when you save it (up to ${R_.max_per_day} a day). Sticky cards and anything the studio writes earn nothing.</p>
+      <div class="card">
+        <label class="field"><span>Notepad</span><textarea rows="6" id="board-text" maxlength="4000" data-bind="boardText" placeholder="Jot ideas, rough scripts, things to film…">${esc(b.text)}</textarea></label>
+        <div class="row"><span class="small muted grow" id="board-words">${plural(words, 'word')}</span><button class="btn" data-action="board-save">Save note</button></div>
+        ${recent.length ? `<div class="list">${recent.map(x => `<div class="li small"><span class="grow">${esc(x.text.slice(0, 60))}${x.text.length > 60 ? '…' : ''}</span><span class="muted num">${x.xp ? '+' + x.xp + ' XP' : 'no XP'}</span></div>`).join('')}</div>` : ''}
+      </div>
+      <div class="row between"><h2>Sticky cards</h2><button class="btn soft sm" data-action="board-add">+ Add card</button></div>
+      ${b.cards.length ? `<div class="stickies" id="stickies">${b.cards.map((c, i) => `<div class="sticky c${i % 4}" data-card="${c.id}">
+          <textarea rows="3" maxlength="400" data-card-text="${c.id}" aria-label="Sticky card ${i + 1}" placeholder="Write on the card">${esc(c.text)}</textarea>
+          <div class="row"><button class="btn ghost sm" data-action="board-move" data-id="${c.id}" data-dir="-1" aria-label="Move earlier" ${i === 0 ? 'disabled' : ''}>←</button><button class="btn ghost sm" data-action="board-move" data-id="${c.id}" data-dir="1" aria-label="Move later" ${i === b.cards.length - 1 ? 'disabled' : ''}>→</button><span class="grow"></span><button class="btn danger sm" data-action="board-del" data-id="${c.id}">Delete</button></div></div>`).join('')}</div>`
+        : '<div class="card"><p class="muted small">No cards yet. Tap Add card for one thought per card.</p></div>'}
+    </section>`;
+  }
+
+  function boardSave() {
+    const b = state.board;
+    const text = String(b.text || '').trim();
+    if (!text) { toast('Write a note first'); return; }
+    const before = snapshot();
+    const id = E.uid('note');
+    const entry = E.award(state, cfg, { source: 'board', sourceId: id, score: G.looksLikeJunk(text) ? 1 : 10, words: wordCount(text), duplicate: E.isDuplicateIdea(text, b.saves, cfg), now: now() });
+    b.saves.unshift({ id, text, at: iso(now()), xp: entry.amount });
+    save();
+    celebrate(before);
+    render();
+    const n = entry.notes;
+    if (n.includes('too_short')) toast(`Saved. Notes under ${cfg.xp.board.min_words} words earn no XP`);
+    else if (n.includes('duplicate')) toast('Saved, but it is very close to an earlier note, so 0 XP');
+    else if (n.includes('low_quality')) toast('Saved. Write a real thought to earn XP');
+    else if (n.includes('daily_limit')) toast('Saved. Daily note XP limit reached');
+    else if (n.includes('daily_cap') && !entry.amount) toast('Saved. Daily practice XP cap reached');
+    else { toast('Note saved'); burst(entry.amount); }
   }
 
   function backBar(title) {
@@ -887,41 +956,136 @@
     </section>`;
   }
 
-  // ---------- coach ----------
+  // ---------- chat: coach, studio and the today card (all on Home) ----------
 
-  const QUICK = ['How do I write a better hook?', 'What should I post today?', "What's working?", 'My views are low', 'When should I post?', 'How do brand deals work?', 'Can I buy followers?'];
+  const QUICK = ["I'm stuck", 'Plan a shoot with friends', 'What should I post today?', 'How do I write a better hook?', "What's working?", 'My views are low', 'When should I post?', 'How do brand deals work?', 'Can I buy followers?'];
+  const MIC_HINT = "Voice typing isn't supported here. Tap the keyboard's mic or type.";
+  // The AI behind the studio is the built-in mock. Pass { llm } to ST.run to plug in a real model later.
+  const STUDIO_LLM = null;
 
-  function coachView() {
-    if (!state.chat.length) { state.chat.push({ from: 'coach', text: K.chat(state.profile, 'hi'), at: iso(now()) }); save(); }
-    return `<section class="screen">${topbar()}
-      <div class="row"><div class="avatar" aria-hidden="true">${K.NAME[0]}</div><div><h2>${esc(K.NAME)}</h2><p class="small muted">Your coach · ${lang() === 'hi' ? 'Hinglish' : 'English'}</p></div></div>
-      <div class="chat" id="chat" role="log" aria-label="Chat with ${esc(K.NAME)}">${state.chat.map(m => `<div class="msg ${m.from === 'me' ? 'me' : 'coach'}">${esc(m.text)}</div>`).join('')}</div>
-      <div class="composer" style="flex-direction:column">
-        <div class="quick">${QUICK.map(q => `<button type="button" data-action="quick" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
-        <div class="row"><input type="text" maxlength="400" autocomplete="off" enterkeyhint="send" data-bind="chatText" data-enter="chat" value="${esc(draft('chatText'))}" placeholder="Ask ${esc(K.NAME)} anything" aria-label="Message"><button class="btn" data-action="chat">Send</button></div>
-      </div>
-    </section>`;
+  function studioCtx() {
+    const t = now();
+    return { cfg, appCfg: APP, profile: state.profile, insights: E.postInsights(state, cfg, t), engagement: E.engagementInsights(state, cfg, t), posts: state.posts, today: E.localDay(t) };
+  }
+
+  function gapText(gap) { return gap == null ? '' : gap === 0 ? 'Last post: today' : `Last post: ${plural(gap, 'day')} ago`; }
+
+  function todayCard(brief, tp) {
+    const gap = gapText(tp.gapDays);
+    return `<div class="card hero" id="today-card" data-basis="${tp.basis}">
+        <span class="label">${esc(brief.coach)} · today's pick</span>
+        <p class="prompt" id="today-format">Post a ${esc(tp.format)} today</p>
+        <p class="small">${esc(platformName(tp.platform))}${gap ? ` · <span id="today-gap">${esc(gap)}</span>` : ''}</p>
+        <ul class="reasons small">${tp.reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>
+        <span class="label">Today's prompt</span>
+        <p class="prompt">${esc(tp.prompt)}</p>
+        <div class="row wrap"><button class="btn onbrand sm" data-action="prompt-hooks">Write hooks for this</button><button class="btn ghost sm" style="color:inherit;border-color:currentColor" data-action="prompt-idea">Save as idea</button></div>
+        <p class="small muted">Focus skill: <b>${esc(brief.focusLabel)}</b></p>
+      </div>`;
+  }
+
+  const LBL = {
+    en: { strategist: 'Strategist', instagram: 'Instagram', thread: 'X thread', linkedin: 'LinkedIn post', board: 'Board', critic: 'Critic', angles: 'Angles', questions: 'Questions to answer', shots: 'Shots', slides: 'Slides', caption: 'Caption', verdict: { ship: 'Ship it', tweak: 'Tweak first', rethink: 'Rethink' }, score: 'Hook score', fix: 'Fix', note: 'Written by the studio, so it earns no XP. Only your own idea earns XP when you save it.' },
+    hi: { strategist: 'Strategist', instagram: 'Instagram', thread: 'X thread', linkedin: 'LinkedIn post', board: 'Board', critic: 'Critic', angles: 'Angles', questions: 'In sawaalon ka jawab do', shots: 'Shots', slides: 'Slides', caption: 'Caption', verdict: { ship: 'Post karo', tweak: 'Thoda tweak', rethink: 'Dobara socho' }, score: 'Hook score', fix: 'Fix', note: 'Yeh studio ne likha hai, isliye XP nahi. Sirf tumhara apna idea save karne pe XP milta hai.' }
+  };
+
+  function studioSet(m, i) {
+    const r = m.result, l = LBL[r.lang] || LBL.en, c = r.critic;
+    const reel = r.instagram.concepts[0], car = r.instagram.concepts[1];
+    const card = (agent, inner) => `<article class="studio-card" data-agent="${agent}"><h4>${esc(l[agent])}</h4>${inner}</article>`;
+    const next = r.next.map(n => {
+      if (n.action === 'save-idea') return m.savedId ? '<span class="pill good">Saved to Ideas</span>' : `<button class="btn sm" data-action="studio-save" data-i="${i}">${esc(n.label)} · ${xpRange('idea')}</button>`;
+      if (n.action === 'idea-rep') return m.savedId ? `<button class="btn soft sm" data-action="idea-rep" data-type="hook" data-id="${m.savedId}">${esc(n.label)}</button>` : '';
+      return `<button class="btn soft sm" data-action="open-rep" data-type="hook">${esc(n.label)}</button>`;
+    }).join('');
+    return `<div class="studio-set" data-lang="${r.lang}">
+      ${card('strategist', `<p class="small muted">${l.angles}</p><ul>${r.strategist.angles.map(a => `<li><b>${esc(a.label)}</b>: ${esc(a.why)}</li>`).join('')}</ul><p class="small muted">${l.questions}</p><ul>${r.strategist.questions.map(q => `<li>${esc(q)}</li>`).join('')}</ul>`)}
+      ${card('instagram', `<p><b>Reel:</b> ${esc(reel.title)}</p><p class="hook">"${esc(reel.hook)}"</p><ol class="shots">${reel.shots.map(x => `<li>${esc(x.shot)} <span class="muted">(${x.seconds}s${x.onscreen ? ' · text: ' + esc(x.onscreen) : ''})</span></li>`).join('')}</ol><p class="small"><b>${l.caption}:</b> ${esc(reel.caption)}</p>
+        <p><b>Carousel:</b> ${esc(car.title)}</p><p class="hook">"${esc(car.hook)}"</p><ol class="shots">${car.slides.map(x => `<li>${esc(x.text)}</li>`).join('')}</ol><p class="small"><b>${l.caption}:</b> ${esc(car.caption)}</p>`)}
+      ${card('thread', `<ol class="shots">${r.thread.posts.map(x => `<li>${esc(x)}</li>`).join('')}</ol>`)}
+      ${card('linkedin', r.linkedin.posts.map(x => `<p>${esc(x)}</p>`).join(''))}
+      ${card('board', `<div class="tiles">${r.board.tiles.map(x => `<div class="tile"><b>${x.n}. ${esc(x.label)}</b><span class="small">${esc(x.visual)}</span>${x.text ? `<span class="small muted">${esc(x.text)}</span>` : ''}</div>`).join('')}</div><button class="btn soft sm" data-action="board-from-studio" data-i="${i}">Open on blackboard</button>`)}
+      ${card('critic', `<div class="row wrap"><span class="pill ${c.verdict === 'ship' ? 'good' : c.verdict === 'tweak' ? 'gold' : 'bad'}" data-verdict="${c.verdict}">${esc(l.verdict[c.verdict])}</span><span class="small muted">${l.score}: <span class="num">${c.hook_score}/10</span></span></div>
+        ${c.risks.length ? `<ul>${c.risks.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}<p class="small"><b>${l.fix}:</b> ${esc(c.fix)}</p>`)}
+      <p class="small muted">${esc(l.note)}</p>
+      <div class="row wrap">${next}</div>
+    </div>`;
+  }
+
+  function planCard(m) {
+    const g = m.plan;
+    return `<article class="plan-card" data-kind="group"><h4>Shoot plan for ${g.people} people · about ${g.minutes} min</h4><p>${esc(g.concept)}</p>
+      <p class="small muted">Roles</p><ul>${g.roles.map(x => `<li><b>${esc(x.who)}: ${esc(x.role)}</b>. ${esc(x.job)}</li>`).join('')}</ul>
+      <p class="small muted">Shots</p><ol class="shots">${g.shots.map(x => `<li><b>${esc(x.who)}</b>: ${esc(x.shot)} <span class="muted">(${x.seconds}s)</span></li>`).join('')}</ol>
+      <p class="small muted">Before you start</p><ul>${g.checklist.map(x => `<li>${esc(x)}</li>`).join('')}</ul></article>`;
+  }
+
+  function stuckCard(m) {
+    const u = m.stuck;
+    return `<article class="plan-card" data-kind="stuck"><h4>Stuck? Start tiny</h4><ul>${u.prompts.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+      <button class="btn sm" data-action="open-rep" data-type="${u.action.type}">${esc(u.action.label)}</button></article>`;
+  }
+
+  function chatMsg(m, i) {
+    if (m.kind === 'studio' && m.result) return studioSet(m, i);
+    if (m.kind === 'group' && m.plan) return planCard(m);
+    if (m.kind === 'stuck' && m.stuck) return stuckCard(m);
+    return `<div class="msg ${m.from === 'me' ? 'me' : 'coach'}">${esc(m.text)}</div>`;
+  }
+
+  function chatPush(m) {
+    state.chat.push(Object.assign({ at: iso(now()) }, m));
+    if (state.chat.length > APP.chat_history_max) state.chat = state.chat.slice(-APP.chat_history_max);
+  }
+
+  function focusChat() {
+    const input = document.querySelector('[data-bind="chatText"]');
+    if (input) try { input.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
   }
 
   function sendChat(text) {
-    text = String(text || '').trim();
-    if (!text) return;
-    const t = iso(now());
-    state.chat.push({ from: 'me', text, at: t });
-    state.chat.push({ from: 'coach', text: K.chat(state.profile, text, { insights: E.postInsights(state, cfg, now()), cfg }), at: t });
-    if (state.chat.length > 200) state.chat = state.chat.slice(-200);
+    text = String(text || '').trim().slice(0, SC.max_input_chars);
+    if (!text || ui.thinking) return;
+    const p = state.profile, r = R.route(text, { appCfg: APP }), c = studioCtx();
+    chatPush({ from: 'me', text });
     ui.draft.chatText = '';
+    // Clear the box itself too, or the change event fired when it is replaced would put the old text back.
+    const box = document.querySelector('[data-bind="chatText"]');
+    if (box) box.value = '';
+    ui.micHint = false;
+    ui.chatScroll = true;
+    let flash = false, rep = null;
+    if (r.intent === 'idea') {
+      ui.thinking = true;
+      ST.run(text, c, { llm: STUDIO_LLM })
+        .then(result => chatPush({ from: 'coach', kind: 'studio', result }))
+        .catch(() => chatPush({ from: 'coach', text: K.chat(p, text, { insights: c.insights, cfg }) }))
+        .then(() => { ui.thinking = false; ui.chatScroll = 'start'; save(); render(); });
+    } else if (r.intent === 'group') chatPush({ from: 'coach', kind: 'group', plan: ST.groupPlan(text, p, c) });
+    else if (r.intent === 'stuck') chatPush({ from: 'coach', kind: 'stuck', stuck: ST.unstick(p, c) });
+    else if (r.intent === 'today') {
+      const tp = ST.todayPick(p, c);
+      chatPush({ from: 'coach', text: `Pinned at the top: post a ${tp.format} today. ${tp.reasons[0]}` });
+      flash = true;
+    } else if (r.intent === 'practice') {
+      chatPush({ from: 'coach', text: 'Opening a hook rep. Go.' });
+      rep = r.payload.type;
+    } else chatPush({ from: 'coach', text: K.chat(p, text, { insights: c.insights, cfg }) });
     save();
+    if (rep) { openRep(rep); return; }
     render();
-    const input = document.querySelector('[data-bind="chatText"]');
-    if (input) try { input.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+    focusChat();
+    if (flash) {
+      const card = document.getElementById('today-card');
+      if (card) { card.classList.add('flash'); try { card.scrollIntoView({ block: 'center' }); } catch (e) { /* ignore */ } }
+    }
   }
 
   // ---------- you ----------
 
   const BADGE_EMOJI = { first_xp: '⚡', streak3: '🔥', streak7: '🔐', streak30: '🏆', ideas10: '💡', first_script: '📝', nine: '🎯', filmed: '🎬', lessons5: '🎓' };
-  const REASON = { idea: 'Idea captured', hook: 'Hook rep', rewrite: 'Hook rewrite', script: 'Script rep', lesson: 'Lesson', reversal: 'Reversed', post: 'Verified post', reflection: 'Reflection', clip: 'Practice clip', review: 'Video review' };
-  const NOTE_SHORT = { quality_bonus: 'quality bonus', daily_cap: 'daily cap', low_quality: 'below quality bar', duplicate: 'duplicate', too_short: 'too short', no_change: 'no change' };
+  const REASON = { board: 'Blackboard note', idea: 'Idea captured', hook: 'Hook rep', rewrite: 'Hook rewrite', script: 'Script rep', lesson: 'Lesson', reversal: 'Reversed', post: 'Verified post', reflection: 'Reflection', clip: 'Practice clip', review: 'Video review' };
+  const NOTE_SHORT = { daily_limit: 'daily limit', quality_bonus: 'quality bonus', daily_cap: 'daily cap', low_quality: 'below quality bar', duplicate: 'duplicate', too_short: 'too short', no_change: 'no change' };
   const QUESTS = [
     ['Third Wave-style cafe, Koramangala', '₹4,000 · 1 Reel on our filter coffee'],
     ['D2C skincare brand, Pune', '₹6,500 · 2 Reels + 3 stories'],
@@ -973,6 +1137,8 @@
         <p class="small muted">Reach Gig-ready: ${esc(cfg.tiers[cfg.tiers.length - 1].rule)}.</p>
       </div>
 
+      ${perksCard()}
+
       ${postsCard()}
       ${insightsCard()}
 
@@ -982,6 +1148,13 @@
 
       ${settingsCard()}
     </section>`;
+  }
+
+  function perksCard() {
+    const list = E.perks(state, cfg);
+    return `<div class="card" id="perks"><div class="row between"><h2>Perks shelf</h2><span class="pill gold">Coming soon</span></div>
+      <p class="small muted">Examples of perks you could unlock. There are no real sponsors yet, so nothing here can be claimed.</p>
+      ${list.map(x => `<div class="perk ${x.unlocked ? 'on' : ''}" data-perk="${x.id}" data-unlocked="${x.unlocked}"><span aria-hidden="true">${x.unlocked ? '🔓' : '🔒'}</span><div class="grow"><b>${esc(x.name)}</b><p class="small muted">${esc(x.desc)}</p></div><span class="pill ${x.unlocked ? 'good' : ''}">${x.unlocked ? 'Unlocked' : esc(x.unlock)}</span></div>`).join('')}</div>`;
   }
 
   // Most recent first: by date posted, then by when it was logged.
@@ -1489,7 +1662,7 @@
     },
 
     filter: el => { ui.filter = el.dataset.f; render(); },
-    voice: () => startVoice(),
+    voice: el => startVoice(el.dataset.target),
     'idea-rep': el => { ui.tab = 'ideas'; openRep(el.dataset.type, { ideaId: el.dataset.id }); },
     'idea-stage': el => {
       const idea = state.ideas.find(i => i.id === el.dataset.id);
@@ -1544,6 +1717,35 @@
       toast('Idea removed');
     },
 
+    'studio-save': el => {
+      const m = state.chat[Number(el.dataset.i)];
+      if (!m || !m.result || m.savedId) return;
+      // Only the user's own words are saved (and earn XP through the usual idea path); the AI parts earn nothing.
+      const idea = addIdea(m.result.idea.text, 'chat');
+      if (idea) { m.savedId = idea.id; save(); render(); }
+    },
+    'board-open': () => go({ view: { kind: 'board' } }),
+    'board-add': () => {
+      const c = { id: E.uid('card'), text: '', ai: false };
+      state.board.cards.push(c); save(); render();
+      const t = document.querySelector(`[data-card-text="${c.id}"]`);
+      if (t) try { t.focus(); } catch (e) { /* ignore */ }
+    },
+    'board-del': el => { state.board.cards = state.board.cards.filter(c => c.id !== el.dataset.id); save(); render(); },
+    'board-move': el => {
+      const cards = state.board.cards, i = cards.findIndex(c => c.id === el.dataset.id), j = i + Number(el.dataset.dir);
+      if (i < 0 || j < 0 || j >= cards.length) return;
+      [cards[i], cards[j]] = [cards[j], cards[i]]; save(); render();
+    },
+    'board-save': () => boardSave(),
+    'board-from-studio': el => {
+      // The studio's tiles become sticky cards marked as AI-written. They never earn XP.
+      const m = state.chat[Number(el.dataset.i)];
+      if (!m || !m.result) return;
+      m.result.board.tiles.forEach(t => state.board.cards.push({ id: E.uid('card'), text: `${t.label}: ${t.visual}${t.text ? ' (' + t.text + ')' : ''}`, ai: true }));
+      save();
+      go({ view: { kind: 'board' } });
+    },
     quick: el => sendChat(el.dataset.q),
     chat: () => sendChat(draft('chatText')),
     'add-idea': () => { const voice = ui.voiceUsed; ui.voiceUsed = false; addIdea(draft('ideaText'), voice ? 'voice' : 'text'); },
@@ -1603,7 +1805,13 @@
 
   function bind(e) {
     const t = e.target;
+    if (t.dataset && t.dataset.cardText) {
+      const c = state.board.cards.find(x => x.id === t.dataset.cardText);
+      if (c) { c.text = t.value; c.ai = false; save(); }
+      return;
+    }
     const k = t.dataset && t.dataset.bind;
+    if (k === 'boardText') { state.board.text = t.value; save(); const w = document.getElementById('board-words'); if (w) w.textContent = plural(wordCount(t.value), 'word'); return; }
     if (k) {
       ui.draft[k] = t.type === 'checkbox' ? t.checked : t.value;
       if (k === 'script') { const wc = document.getElementById('wc'); if (wc) wc.textContent = wcText(wordCount(t.value)); }

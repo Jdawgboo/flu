@@ -3,3 +3,36 @@
 # e.g. "https://lockin-ig-connect.<account>.workers.dev". Empty means demo mode:
 # "Connect Instagram" loads a built-in sample creator instead. See docs/INSTAGRAM.md.
 ig_api_base: ""
+
+# ai_api_base: URL of a deployed services/ai Worker, no trailing slash. Empty means the
+# built-in deterministic mock agents answer (no network calls). See docs/STUDIO.md.
+ai_api_base: ""
+# Language for voice typing (the browser's SpeechRecognition).
+speech_lang: en-IN
+# Chat messages kept in the Home thread.
+chat_history_max: 200
+
+# Studio: the idea -> strategist, Instagram, thread, board, critic pipeline.
+studio:
+  max_input_chars: 600
+  min_idea_words: 3        # a chat message this long (and not a question) is treated as an idea
+  angles: 3
+  questions: 3
+  reel_shots: 5
+  carousel_slides: 7
+  thread_posts: 5
+  linkedin_posts: 4        # hook line, short paragraphs, closing question
+  board_tiles: 6
+  default_format: Reel
+  timeout_ms: 8000         # per agent when an LLM is plugged in; slower falls back to the mock
+  agents: [strategist, instagram, thread, linkedin, board, critic]
+  unstick_prompts: 3
+  unstick_seconds: 60
+
+# Group shoots with friends.
+group:
+  default_size: 3
+  min_size: 2
+  max_size: 8
+  reel_seconds: 30
+  shoot_minutes: 45
