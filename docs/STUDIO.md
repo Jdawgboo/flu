@@ -51,3 +51,10 @@ Called once per agent (the critic last, with the other parts in `input.parts`). 
 ## Blackboard and perks
 - `state.board = { text, cards: [{ id, text, ai }], saves: [{ id, text, at, xp }] }`. A save of the notepad text awards `xp.board` through `E.award` (min words, near-copy and gibberish gate, `max_per_day`, shared daily cap).
 - `E.perks(state, cfg)` returns `[{ id, name, desc, unlock, unlocked }]` from `perks` in `config/gamification.yaml`; a perk needs every condition it lists (`level`, `tier`).
+
+## Voice mode (0.5.0)
+Home has a big mic button that starts a hands-free voice session: listen, send the final transcript through `router.js` and the studio, speak a short summary, listen again. Settings live in `config/app.yaml` under `voice`.
+
+- `app/src/voice.js` (pure): `speakable(msg, { maxChars })` makes speech from a chat message (studio result: top angle, one question, the reel hook; stuck; group plan; coach text), `isStopPhrase`, `decide` (stop, turn limit, empty, send), `pickVoice`, `langOf`.
+- The session itself (SpeechRecognition with interim results, speechSynthesis, timers) lives in `app.js`. The mic is closed while speaking; tapping the mic interrupts speech; hiding the app ends the session. Replies are only spoken during a session, and the "Voice replies" toggle (`state.voice.replies`) turns speech off.
+- Limits: HTTPS and a browser with SpeechRecognition (Chrome and Android best, iOS Safari and PWAs limited). No wake word: a web app cannot listen in the background, so "Hey Flu" needs a native app later.

@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  const E = window.LIEngine, C = window.LIContent, G = window.LIGrader, K = window.LICoach, IGM = window.LIInstagram, ST = window.LIStudio, R = window.LIRouter;
+  const E = window.LIEngine, C = window.LIContent, G = window.LIGrader, K = window.LICoach, IGM = window.LIInstagram, ST = window.LIStudio, R = window.LIRouter, V = window.LIVoice;
   const cfg = window.LI_CONFIG;
   const APP = cfg.app || {};
   const SC = APP.studio;
@@ -40,7 +40,7 @@
 
   function fresh() {
     return {
-      v: 3, profile: null, ob: { step: 'welcome', data: {} },
+      v: 4, voice: { replies: true }, profile: null, ob: { step: 'welcome', data: {} },
       ledger: [], reps: [], ideas: [], lessonsDone: [], chat: [], posts: [], board: { text: '', cards: [], saves: [] },
       notif: { day: '', count: 0, sent: {} }, seenLevel: 1, highestTier: 'starter', leagueIndex: 0
     };
@@ -60,7 +60,7 @@
   }
 
   let state = load();
-  const ui = { igBusy: false, igErr: '', confirmIg: false, editPost: null, tab: 'home', view: null, draft: {}, filter: 'all', err: '', otpSent: false, modals: [], confirmDelete: false, exportText: null, exportCopied: false, ideaConfirm: null, listening: false, thinking: false, micHint: false, chatScroll: false };
+  const ui = { igBusy: false, igErr: '', confirmIg: false, editPost: null, tab: 'home', view: null, draft: {}, filter: 'all', err: '', otpSent: false, modals: [], confirmDelete: false, exportText: null, exportCopied: false, ideaConfirm: null, listening: false, thinking: false, micHint: false, micMsg: '', voice: 'idle', heard: '', chatScroll: false };
 
   // ---------- helpers ----------
 
@@ -568,13 +568,13 @@
       ${atRisk ? `<div class="card warn" role="alert"><div class="row"><span style="font-size:24px" aria-hidden="true">⏳</span><div class="grow"><h3>Your ${s.current}-day streak is at risk</h3>
         <p class="small">${Math.floor(mins / 60)}h ${mins % 60}m left today.${s.freezes ? ' A freeze would cover it, but save it for a real off day.' : ' One quick rep keeps it alive.'}</p></div></div>
         <button class="btn gold block" data-action="open-rep" data-type="hook">Do a 1-minute rep</button></div>` : ''}
+      ${voicePanel()}
       ${todayCard(brief, tp)}
       <div class="chat scroll" id="chat" role="log" aria-label="Chat with ${esc(K.NAME)}"><div class="msg coach brief"><b>${esc(brief.coach)} · daily brief</b><br>${esc(brief.message)}</div>${state.chat.map(chatMsg).join('')}${ui.thinking ? '<div class="msg coach thinking" id="thinking" role="status">Thinking…</div>' : ''}</div>
       <div class="quick" aria-label="Quick questions">${QUICK.map(q => `<button type="button" data-action="quick" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
       <div class="card tight composer-card">
         <textarea rows="3" maxlength="${SC.max_input_chars}" autocomplete="off" enterkeyhint="send" data-bind="chatText" data-enter="chat" aria-label="Message to ${esc(K.NAME)}" placeholder="Tell ${esc(K.NAME)} an idea, ask anything, or say what you are stuck on">${esc(draft('chatText'))}</textarea>
-        ${ui.micHint ? `<p class="small muted" id="mic-hint" role="status">${MIC_HINT}</p>` : ''}
-        <div class="row"><button class="btn grow" data-action="chat">Send</button><button class="btn ghost mic" type="button" data-action="voice" data-target="chatText" aria-label="Talk to ${esc(K.NAME)}" aria-pressed="${ui.listening}">${ui.listening ? '● Listening' : '🎙️'}</button></div>
+        <button class="btn block" data-action="chat">Send</button>
       </div>
       <h2>Your week</h2>
       ${levelCard()}
@@ -659,14 +659,13 @@
     </article>`;
   }
 
-  // Voice typing into a draft field: "ideaText" on Ideas, "chatText" on Home.
+  // Voice typing into the Ideas draft. Home uses the hands-free voice session below instead.
   function startVoice(target) {
     target = target || 'ideaText';
-    const chat = target === 'chatText';
     const unavailable = () => {
       ui.listening = false;
-      if (chat) { ui.micHint = true; render(); focusChat(); }
-      else { render(); toast('Voice input is not available here. Type your idea instead.'); }
+      render();
+      toast('Voice input is not available here. Type your idea instead.');
     };
     if (!SR) { unavailable(); return; }
     let rec;
@@ -683,14 +682,194 @@
         if (box) box.value = ui.draft[target];
       };
       rec.onerror = unavailable;
-      rec.onend = () => { ui.listening = false; render(); if (chat && ui.micHint) focusChat(); };
+      rec.onend = () => { ui.listening = false; render(); };
       rec.start();
-      ui.micHint = false;
       ui.listening = true;
       render();
     } catch (e) {
       unavailable();
     }
+  }
+
+  // ---------- voice session (Home) ----------
+  // idle -> listening -> thinking -> speaking -> listening ... until stop, a stop phrase, the idle
+  // timeout or the turn limit. The mic is closed while the app speaks so it never hears itself.
+
+  const SYNTH = (() => { try { return window.speechSynthesis && typeof window.SpeechSynthesisUtterance === 'function' ? window.speechSynthesis : null; } catch (e) { return null; } })();
+  const VSTATE = { idle: 'Tap the mic and talk', listening: 'Listening…', thinking: 'Thinking…', speaking: 'Speaking…' };
+  const MIC_ERR = {
+    'not-allowed': 'Microphone access is blocked. Allow it in your browser settings, or type below.',
+    'service-not-allowed': 'Microphone access is blocked. Allow it in your browser settings, or type below.',
+    'audio-capture': 'No microphone was found. Type below instead.',
+    network: 'Voice needs an internet connection. Type below instead.',
+    'language-not-supported': 'Voice is not available in this language here. Type below instead.'
+  };
+  const vs = { active: false, gen: 0, rec: null, idle: null, restart: null, turns: 0, utter: null };
+
+  function voicePanel() {
+    const st = ui.voice, on = st !== 'idle';
+    return `<div class="card tight voice-panel" id="voice-panel" data-state="${st}">
+        <div class="mic-stage"><span class="pulse" aria-hidden="true"></span>
+          <button class="mic-btn" id="mic-btn" type="button" data-action="mic" aria-pressed="${on}" aria-label="${on ? (st === 'speaking' ? 'Interrupt and talk' : 'Voice session on') : 'Talk to ' + esc(K.NAME)}"><span aria-hidden="true">🎙️</span></button></div>
+        <div class="voice-side">
+          <p class="voice-status" id="voice-status" role="status" aria-live="polite">${VSTATE[st]}</p>
+          <p class="voice-heard small" id="voice-heard" aria-live="off">${esc(ui.heard)}</p>
+          ${ui.micHint ? `<p class="small muted" id="mic-hint" role="status">${esc(ui.micMsg || MIC_HINT)}</p>` : ''}
+          <div class="row wrap">
+            <button class="btn ghost sm" id="voice-stop" type="button" data-action="voice-stop" ${on ? '' : 'disabled'}>■ Stop</button>
+            ${SYNTH ? `<button class="btn soft sm" id="voice-replies" type="button" data-action="voice-replies" aria-pressed="${state.voice.replies}">${state.voice.replies ? '🔊 Replies on' : '🔇 Replies off'}</button>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function setVState(st) {
+    ui.voice = st;
+    render();
+  }
+
+  function voiceHint(msg) {
+    ui.micHint = true; ui.micMsg = msg || MIC_HINT;
+    endSession();
+    render();
+    focusChat();
+  }
+
+  function clearVoiceTimers() {
+    clearTimeout(vs.idle); clearTimeout(vs.restart);
+    vs.idle = vs.restart = null;
+  }
+
+  function killRec() {
+    const rec = vs.rec;
+    vs.rec = null;
+    if (!rec) return;
+    rec.onresult = rec.onerror = rec.onend = null;
+    try { rec.abort ? rec.abort() : rec.stop(); } catch (e) { /* ignore */ }
+  }
+
+  function cancelSpeech() {
+    vs.utter = null;
+    try { if (SYNTH) SYNTH.cancel(); } catch (e) { /* ignore */ }
+  }
+
+  function endSession(msg) {
+    const was = ui.voice !== 'idle' || vs.active;
+    vs.active = false; vs.gen++; vs.turns = 0;
+    clearVoiceTimers(); killRec(); cancelSpeech();
+    ui.voice = 'idle'; ui.heard = '';
+    if (was) render();
+    if (msg) toast(msg);
+  }
+
+  function micTap() {
+    if (!SR) { voiceHint(MIC_HINT); return; }
+    ui.micHint = false;
+    if (vs.active && ui.voice === 'speaking') { cancelSpeech(); vs.gen++; listen(); return; } // barge-in
+    if (vs.active) return;
+    cancelSpeech();
+    vs.active = true; vs.turns = 0;
+    listen();
+  }
+
+  // fresh: a new listening turn (arms the idle deadline). A silent restart keeps the running deadline.
+  function listen(fresh = true) {
+    if (!vs.active) return;
+    const gen = ++vs.gen, VC = APP.voice;
+    killRec(); clearTimeout(vs.restart); vs.restart = null;
+    if (fresh) clearTimeout(vs.idle);
+    let rec;
+    try {
+      rec = new SR();
+      rec.lang = APP.speech_lang;
+      rec.interimResults = true;
+      rec.continuous = false;
+      rec.maxAlternatives = 1;
+    } catch (e) { voiceHint(MIC_HINT); return; }
+    vs.rec = rec;
+    let heard = '', done = false;
+    const finish = text => { if (done) return; done = true; killRec(); clearTimeout(vs.idle); handleHeard(text, gen); };
+    rec.onresult = ev => {
+      if (gen !== vs.gen || !ev.results) return;
+      clearTimeout(vs.idle); // someone is talking
+      let text = '', final = false;
+      for (let i = 0; i < ev.results.length; i++) {
+        const r = ev.results[i];
+        if (r && r[0]) text += (text ? ' ' : '') + r[0].transcript;
+        if (r && r.isFinal) final = true;
+      }
+      heard = text.trim();
+      ui.heard = heard;
+      const box = document.getElementById('voice-heard');
+      if (box) box.textContent = heard;
+      if (final) finish(heard);
+    };
+    rec.onerror = ev => {
+      if (gen !== vs.gen) return;
+      const code = ev && ev.error;
+      if (code === 'no-speech' || code === 'aborted') return; // onend follows; the idle timer decides
+      done = true;
+      voiceHint(MIC_ERR[code] || MIC_HINT);
+    };
+    rec.onend = () => {
+      if (gen !== vs.gen || done) return;
+      if (heard) { finish(heard); return; } // silence ended it after some words
+      vs.rec = null;
+      vs.restart = setTimeout(() => { if (gen === vs.gen) listen(false); }, VC.restart_ms); // nothing heard: listen again
+    };
+    try { rec.start(); } catch (e) { voiceHint(MIC_HINT); return; }
+    if (fresh) vs.idle = setTimeout(() => { if (vs.active) endSession('Voice mode ended: I did not hear anything.'); }, VC.idle_timeout_ms);
+    ui.heard = '';
+    setVState('listening');
+  }
+
+  function handleHeard(text, gen) {
+    if (gen !== vs.gen || !vs.active) return;
+    const d = V.decide(text, { turns: vs.turns }, APP.voice);
+    if (d.action === 'ignore') { listen(); return; }
+    if (d.action === 'stop') { endSession(d.reason === 'max-turns' ? 'Voice mode ended: turn limit reached.' : 'Voice mode stopped.'); return; }
+    vs.turns++;
+    ui.heard = '';
+    const g = ++vs.gen;
+    ui.voice = 'thinking';
+    sendChat(text, { voice: true }).then(res => {
+      if (g !== vs.gen || !vs.active) return;
+      if (!res || res.rep) { endSession(); return; }
+      return speakReply(res.msg);
+    }).then(() => {
+      if (g !== vs.gen || !vs.active) return; // stopped, or the user barged in and already re-listened
+      if (vs.turns >= APP.voice.max_turns) { endSession('Voice mode ended: turn limit reached.'); return; }
+      listen();
+    });
+    render();
+  }
+
+  // Resolves when the reply has been spoken (or at once when voice replies are off or unsupported).
+  function speakReply(msg) {
+    return new Promise(resolve => {
+      const text = state.voice.replies && SYNTH && msg ? V.speakable(msg, { maxChars: APP.voice.spoken_max_chars }) : '';
+      if (!text) { resolve(); return; }
+      const hi = V.langOf(msg, state.profile && state.profile.language) === 'hi';
+      let u;
+      try { u = new window.SpeechSynthesisUtterance(text); } catch (e) { resolve(); return; }
+      const voice = V.pickVoice(SYNTH.getVoices ? SYNTH.getVoices() : [], hi ? 'hi-IN' : 'en-IN') || (hi ? V.pickVoice(SYNTH.getVoices(), 'en-IN') : null);
+      u.lang = hi ? 'hi-IN' : APP.speech_lang;
+      if (voice) { u.voice = voice; u.lang = voice.lang || u.lang; }
+      u.rate = APP.voice.speech_rate;
+      let timer = null, over = false;
+      const end = () => { if (over) return; over = true; clearTimeout(timer); if (vs.utter === u) vs.utter = null; resolve(); };
+      u.onend = u.onerror = end;
+      timer = setTimeout(() => { try { SYNTH.cancel(); } catch (e) { /* ignore */ } end(); }, APP.voice.speak_timeout_ms);
+      vs.utter = u;
+      setVState('speaking');
+      try { SYNTH.cancel(); SYNTH.speak(u); } catch (e) { end(); }
+    });
+  }
+
+  function setVoiceReplies(on) {
+    state.voice.replies = !!on;
+    if (!on) cancelSpeech();
+    save(); render();
   }
 
   // ---------- practice ----------
@@ -1043,9 +1222,12 @@
     if (input) try { input.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
   }
 
-  function sendChat(text) {
+  /* Sends a message through the router. Returns a promise of { msg, rep } (the coach's reply, and
+   * whether a rep screen opened) or null when nothing was sent. { voice: true } keeps the keyboard closed. */
+  function sendChat(text, opts) {
     text = String(text || '').trim().slice(0, SC.max_input_chars);
-    if (!text || ui.thinking) return;
+    if (!text || ui.thinking) return Promise.resolve(null);
+    const quiet = !!(opts && opts.voice);
     const p = state.profile, r = R.route(text, { appCfg: APP }), c = studioCtx();
     chatPush({ from: 'me', text });
     ui.draft.chatText = '';
@@ -1054,31 +1236,34 @@
     if (box) box.value = '';
     ui.micHint = false;
     ui.chatScroll = true;
-    let flash = false, rep = null;
+    let last = null;
+    const reply = m => { chatPush(m); last = state.chat[state.chat.length - 1]; };
+    let flash = false, rep = null, pending = null;
     if (r.intent === 'idea') {
       ui.thinking = true;
-      ST.run(text, c, { llm: STUDIO_LLM })
-        .then(result => chatPush({ from: 'coach', kind: 'studio', result }))
-        .catch(() => chatPush({ from: 'coach', text: K.chat(p, text, { insights: c.insights, cfg }) }))
-        .then(() => { ui.thinking = false; ui.chatScroll = 'start'; save(); render(); });
-    } else if (r.intent === 'group') chatPush({ from: 'coach', kind: 'group', plan: ST.groupPlan(text, p, c) });
-    else if (r.intent === 'stuck') chatPush({ from: 'coach', kind: 'stuck', stuck: ST.unstick(p, c) });
+      pending = ST.run(text, c, { llm: STUDIO_LLM })
+        .then(result => reply({ from: 'coach', kind: 'studio', result }))
+        .catch(() => reply({ from: 'coach', text: K.chat(p, text, { insights: c.insights, cfg }) }))
+        .then(() => { ui.thinking = false; ui.chatScroll = 'start'; save(); render(); return { msg: last, rep: false }; });
+    } else if (r.intent === 'group') reply({ from: 'coach', kind: 'group', plan: ST.groupPlan(text, p, c) });
+    else if (r.intent === 'stuck') reply({ from: 'coach', kind: 'stuck', stuck: ST.unstick(p, c) });
     else if (r.intent === 'today') {
       const tp = ST.todayPick(p, c);
-      chatPush({ from: 'coach', text: `Pinned at the top: post a ${tp.format} today. ${tp.reasons[0]}` });
+      reply({ from: 'coach', text: `Pinned at the top: post a ${tp.format} today. ${tp.reasons[0]}` });
       flash = true;
     } else if (r.intent === 'practice') {
-      chatPush({ from: 'coach', text: 'Opening a hook rep. Go.' });
+      reply({ from: 'coach', text: 'Opening a hook rep. Go.' });
       rep = r.payload.type;
-    } else chatPush({ from: 'coach', text: K.chat(p, text, { insights: c.insights, cfg }) });
+    } else reply({ from: 'coach', text: K.chat(p, text, { insights: c.insights, cfg }) });
     save();
-    if (rep) { openRep(rep); return; }
+    if (rep) { openRep(rep); return Promise.resolve({ msg: last, rep: true }); }
     render();
-    focusChat();
+    if (!quiet) focusChat();
     if (flash) {
       const card = document.getElementById('today-card');
       if (card) { card.classList.add('flash'); try { card.scrollIntoView({ block: 'center' }); } catch (e) { /* ignore */ } }
     }
+    return pending || Promise.resolve({ msg: last, rep: false });
   }
 
   // ---------- you ----------
@@ -1247,6 +1432,8 @@
       ${quietNote}
       <div class="row"><label class="field grow"><span>Quiet hours start</span><input type="time" data-setting="quietStart" value="${esc(qw.start)}"></label>
         <label class="field grow"><span>Quiet hours end</span><input type="time" data-setting="quietEnd" value="${esc(qw.end)}"></label></div>
+      ${SYNTH ? `<div class="row between"><div class="grow"><b>Voice replies</b><p class="small muted">${state.voice.replies ? `${esc(K.NAME)} speaks answers aloud while you are in a voice session.` : 'Answers stay on screen. Nothing is spoken.'}</p></div><button class="btn ${state.voice.replies ? 'ghost' : 'soft'} sm" id="settings-voice-replies" data-action="voice-replies" aria-pressed="${state.voice.replies}">${state.voice.replies ? 'Turn off' : 'Turn on'}</button></div>`
+        : '<div><b>Voice replies</b><p class="small muted">This browser cannot speak answers aloud.</p></div>'}
       <span class="label">Theme</span>
       <div class="options three">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([id, l]) => `<button class="opt" data-action="set" data-key="theme" data-val="${id}" aria-pressed="${(p.theme || 'system') === id}"><b>${l}</b></button>`).join('')}</div>
       <div class="row between"><div class="grow"><b>Reminders</b><p class="small muted">${esc(notifStatus())}</p></div><button class="btn ${on ? 'ghost' : 'soft'} sm" data-action="notify-toggle">${on ? 'Turn off' : 'Enable'}</button></div>
@@ -1663,6 +1850,9 @@
 
     filter: el => { ui.filter = el.dataset.f; render(); },
     voice: el => startVoice(el.dataset.target),
+    mic: () => micTap(),
+    'voice-stop': () => endSession(),
+    'voice-replies': () => setVoiceReplies(!state.voice.replies),
     'idea-rep': el => { ui.tab = 'ideas'; openRep(el.dataset.type, { ideaId: el.dataset.id }); },
     'idea-stage': el => {
       const idea = state.ideas.find(i => i.id === el.dataset.id);
@@ -1833,6 +2023,7 @@
   document.addEventListener('focusin', e => { if (e.target.hasAttribute && e.target.hasAttribute('data-select-all')) try { e.target.select(); } catch (err) { /* ignore */ } });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && ui.modals.length) { ui.modals.shift(); render(); } });
   document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') endSession(); // the mic and speech stop with the app
     if (document.visibilityState === 'visible') { if (state.profile && state.profile.onboarded && !ui.view && ui.tab === 'home') render(); checkNotify(); }
   });
 

@@ -9,6 +9,15 @@ ig_api_base: ""
 ai_api_base: ""
 # Language for voice typing (the browser's SpeechRecognition).
 speech_lang: en-IN
+# Voice mode (0.5.0): a hands-free talk loop on Home. Needs HTTPS and a browser with SpeechRecognition.
+voice:
+  idle_timeout_ms: 15000     # no speech heard for this long ends the session
+  max_turns: 10              # messages per session before it ends by itself
+  spoken_max_chars: 280      # a spoken reply is cut at a sentence end under this length
+  speech_rate: 1.05          # speechSynthesis rate (1 is normal)
+  restart_ms: 250            # pause before listening again when the browser ended a listen with nothing heard
+  speak_timeout_ms: 25000    # safety: stop waiting for a spoken reply to finish after this long
+  stop_phrases: [stop, bas, "that's all", band karo]
 # Chat messages kept in the Home thread.
 chat_history_max: 200
 

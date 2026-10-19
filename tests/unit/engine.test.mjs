@@ -592,7 +592,7 @@ describe('self-reported posts', () => {
     ];
     s.posts = [{ id: 'old', ideaId: 'c', date: '2026-10-11', platform: 'youtube', source: 'manual' }];
     E.migrate(s);
-    assert.equal(s.v, 3);
+    assert.equal(s.v, 4);
     assert.equal(s.posts.length, 2);
     const made = s.posts.find(p => p.ideaId === 'a');
     assert.deepEqual({ ...made, id: undefined }, { id: undefined, ideaId: 'a', date: '2026-10-10', platform: null, format: '', views: null, viewsUpdatedAt: null, note: '', source: 'manual', verified: false, loggedOn: '2026-10-10' });
@@ -606,7 +606,7 @@ describe('self-reported posts', () => {
     const s = { ideas: [], ledger: [] };
     E.migrate(s);
     assert.deepEqual(s.posts, []);
-    assert.equal(s.v, 3);
+    assert.equal(s.v, 4);
   });
 });
 

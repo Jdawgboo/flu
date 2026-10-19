@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.0 — 2026-10-19 · Voice mode: talk to it like Siri
+Jash's ask: "it will be like siri so we can talk anytime we are free and ideating". Voice is now the main way into Home. The mock AI is unchanged and nothing goes over the network.
+
+Home
+- A big mic button (`#mic-btn`) sits above the text box, which stays as the quiet second way in. Tap it to start a voice session: it listens (pulsing ring, live transcript from interim results, language from `speech_lang`), sends the final result through the same Router and Studio path as typing, speaks a short summary of the reply, then listens again by itself. States are idle, listening, thinking and speaking; Stop is always on screen.
+- A session ends on Stop, a stop phrase (`stop`, `bas`, `that's all`, `band karo`, also "ok stop", "please stop it"), no speech for `voice.idle_timeout_ms`, `voice.max_turns` messages, the app going to the background, or a practice rep opening.
+- The mic is closed while the app speaks, so it never hears itself. Tapping the mic during a spoken reply cancels it and listens (barge-in).
+- No SpeechRecognition, a blocked microphone, no microphone or no connection show a clear message in `#mic-hint` and focus the text box.
+- Replies are spoken only during a voice session, not when you type. The old one-shot "dictate into the box" mic on Home is gone; Ideas keeps its dictation mic.
+
+Spoken replies (`app/src/voice.js`, pure and DOM-free, unit tested)
+- `speakable(msg, { maxChars })` turns any reply into short speech with no markdown, links or emoji, cut at a sentence end under `voice.spoken_max_chars`. Studio result: top angle, one question, the reel hook (a "rethink" verdict speaks the risk and the fix instead). Stuck: the first two prompts and the hook rep. Group plan: people, minutes, concept, first shot. Coach chat and today pick: the text itself. Hinglish results use the Hinglish question lead-in and a `hi-IN` voice, falling back to `en-IN`.
+- `isStopPhrase`, `decide` (stop, turn limit, ignore empty, send) and `pickVoice`.
+- "Voice replies" on/off toggle on Home and in You > Settings, saved on the device. Where `speechSynthesis` is missing the toggles are hidden or explained and speech is skipped.
+
+Config (`config/app.yaml`, `voice`)
+- `idle_timeout_ms` 15000, `max_turns` 10, `spoken_max_chars` 280, `speech_rate` 1.05, `stop_phrases`, plus `restart_ms` 250 (pause before listening again when the browser ended a listen with nothing heard) and `speak_timeout_ms` 25000 (safety if a browser never reports the end of speech). Both extra keys are new.
+
+State is now v4 (adds `voice: { replies }`, default on); `E.migrate` fills it in.
+
+Honest limits
+- Needs HTTPS (or localhost) and a browser with SpeechRecognition: Chrome and Android Chrome work best; Safari and iOS home-screen apps are limited or missing. Chrome sends audio to Google for recognition, so voice needs a connection.
+- It is not a wake word. A web app cannot listen in the background or while the screen is off, so "Hey Flu" always-on listening needs a native app later. You open the app and tap the mic.
+
 ## 0.4.0 — 2026-10-19 · Instagram AI manager: Home chat, Idea Studio, blackboard
 Direction (approved by Jash): LockIn becomes an Instagram AI manager, a "centre for an influencer's brain" for solo creators and friend groups. You talk to it by voice or text like talking to yourself. All AI in this build is a deterministic mock (no network calls) behind an interface, so a real model can be swapped in later. See `docs/STUDIO.md`.
 

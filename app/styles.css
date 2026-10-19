@@ -319,3 +319,17 @@ details summary { cursor: pointer; padding: 4px 0; }
 .perk { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); opacity: .75; }
 .perk.on { opacity: 1; }
 .perk .pill { white-space: normal; text-align: center; max-width: 40%; }
+
+/* voice mode (Home) */
+.voice-panel { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; align-items: center; }
+.voice-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mic-stage { position: relative; width: 112px; height: 112px; display: grid; place-items: center; }
+.mic-btn { position: relative; z-index: 1; width: 96px; height: 96px; border-radius: 50%; border: 0; background: var(--brand); color: var(--brand-ink); font-size: 40px; display: grid; place-items: center; box-shadow: var(--shadow); transition: transform .08s ease; }
+.mic-btn:active { transform: scale(.95); }
+.mic-stage .pulse { position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--brand); opacity: 0; pointer-events: none; }
+.voice-panel[data-state="listening"] .pulse { opacity: 1; animation: mic-pulse 1.3s ease-out infinite; }
+.voice-panel[data-state="speaking"] .pulse { opacity: .8; border-color: var(--marigold); animation: mic-pulse 2s ease-out infinite; }
+.voice-panel[data-state="thinking"] .mic-btn { opacity: .7; }
+.voice-status { font-weight: 700; }
+.voice-heard { min-height: 1.4em; color: var(--muted); overflow-wrap: anywhere; }
+@keyframes mic-pulse { 0% { transform: scale(.85); opacity: .9; } 100% { transform: scale(1.18); opacity: 0; } }

@@ -923,7 +923,7 @@ async function v020Checks() {
     await page.reload();
     await page.waitForSelector('.tabbar');
     let st = await S(page);
-    assert.equal(st.v, 3);
+    assert.equal(st.v, 4);
     const posted = st.ideas.filter(i => i.stage === 'posted');
     assert.equal(st.posts.length, posted.length);
     assert.equal(st.posts[0].platform, null);
@@ -1238,7 +1238,7 @@ async function v040Checks() {
       const order = await page.evaluate(() => ['#today-card', '#chat', '[data-bind="chatText"]', '#board-card', '#post-nudge, .card:has([data-action="log-post-open"])'].map(q => document.querySelector(q).getBoundingClientRect().top));
       assert.deepEqual([...order].sort((a, b) => a - b), order, 'today, chat, composer, then your week');
       assert.equal(await page.locator('form').count(), 0);
-      assert.ok(await page.locator('[data-action="voice"][data-target="chatText"]').count(), 'mic always rendered on Home');
+      assert.ok(await page.locator('#mic-btn[data-action="mic"]').count(), 'mic always rendered on Home');
       assert.equal(await page.locator('#chat .msg.brief').count(), 1);
       assert.ok(await page.locator('.quick [data-q="I\'m stuck"]').count() && await page.locator('.quick [data-q="Plan a shoot with friends"]').count() && await page.locator('.quick [data-q="What should I post today?"]').count());
       await layout(page, 'home-0.4.0');
@@ -1414,7 +1414,7 @@ async function v040Checks() {
     await step('0.4.0: with no SpeechRecognition the mic shows the hint and focuses the input', async () => {
       assert.equal(await ph.page.evaluate(() => 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window), false);
       assert.equal(await ph.page.locator('#mic-hint').count(), 0);
-      await ph.page.click('[data-action="voice"][data-target="chatText"]');
+      await ph.page.click('#mic-btn');
       await ph.page.waitForSelector('#mic-hint');
       assert.equal((await ph.page.textContent('#mic-hint')).trim(), "Voice typing isn't supported here. Tap the keyboard's mic or type.");
       assert.equal(await ph.page.evaluate(() => document.activeElement && document.activeElement.dataset.bind), 'chatText');
@@ -1425,45 +1425,253 @@ async function v040Checks() {
     await step('0.4.0: no console errors without SpeechRecognition', async () => assert.deepEqual(ph.errors.filter(e => !/fonts|ERR_INTERNET_DISCONNECTED/.test(e)), []));
     await ph.context.close();
   }
+}
 
-  // Voice: a stub SpeechRecognition that answers, and one that errors.
-  for (const mode of ['result', 'error']) {
-    const ph = await newPhone('light');
-    await ph.context.addInitScript(m => {
-      window.__srLang = null;
-      window.SpeechRecognition = class {
-        start() {
-          window.__srLang = this.lang;
-          setTimeout(() => {
-            if (m === 'result') this.onresult && this.onresult({ results: [[{ transcript: 'make a reel about my chai stall' }]] });
-            else this.onerror && this.onerror({ error: 'not-allowed' });
-            setTimeout(() => this.onend && this.onend(), 10);
-          }, 30);
-        }
-      };
-    }, mode);
+// ---------- 0.5.0: voice mode ----------
+// Stubs for SpeechRecognition and speechSynthesis. The test drives them: __say(text, final) answers the
+// active recognition, __holdSpeech keeps an utterance "speaking" until __finishSpeech().
+function voiceStub({ deny = false } = {}) {
+  window.__sr = { starts: 0, aborts: 0, active: null, lang: null };
+  window.__spoken = []; window.__cancels = 0; window.__holdSpeech = false; window.__speaking = null;
+  window.SpeechRecognition = class {
+    start() {
+      window.__sr.starts++; window.__sr.lang = this.lang; window.__sr.interim = this.interimResults;
+      if (deny) { setTimeout(() => { this.onerror && this.onerror({ error: 'not-allowed' }); this.onend && this.onend(); }, 20); return; }
+      window.__sr.active = this;
+    }
+    abort() { window.__sr.aborts++; if (window.__sr.active === this) window.__sr.active = null; }
+    stop() { this.abort(); }
+  };
+  window.__say = (text, final = true) => {
+    const r = window.__sr.active;
+    if (!r) throw new Error('no active recognition');
+    r.onresult({ results: [Object.assign([{ transcript: text }], { isFinal: final })] });
+  };
+  window.SpeechSynthesisUtterance = class { constructor(t) { this.text = t; } };
+  window.__finishSpeech = () => { const u = window.__speaking; window.__speaking = null; if (u && u.onend) u.onend({}); };
+  // speechSynthesis is a read-only accessor on window in Chromium, so define over it.
+  Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: {
+    speak(u) { window.__spoken.push({ text: u.text, rate: u.rate, lang: u.lang }); window.__speaking = u; if (!window.__holdSpeech) setTimeout(window.__finishSpeech, 60); },
+    cancel() { window.__cancels++; const u = window.__speaking; window.__speaking = null; if (u && u.onend) setTimeout(() => u.onend({}), 0); },
+    getVoices() { return [{ lang: 'en-IN', name: 'Stub' }]; }
+  } });
+}
+
+async function v050Checks() {
+  console.log('\n== 0.5.0 ==');
+  const IDEA = 'A reel about my ₹80 dosa at the hostel canteen near campus';
+  const open = async (scheme, opts) => {
+    const ph = await newPhone(scheme);
+    await ph.context.addInitScript(voiceStub, opts);
     await ph.page.goto(BASE + '/');
     await ph.page.waitForSelector('[data-action="demo"]');
     await act(ph.page, 'demo');
     await ph.page.waitForSelector('.tabbar');
     await closeModals(ph.page);
-    await step(`0.4.0: voice ${mode}`, async () => {
-      await ph.page.click('[data-action="voice"][data-target="chatText"]');
-      if (mode === 'result') {
-        await ph.page.waitForFunction(() => document.querySelector('[data-bind="chatText"]').value === 'make a reel about my chai stall');
-        assert.equal(await ph.page.evaluate(() => window.__srLang), 'en-IN');
-        await ph.page.waitForFunction(() => !window.LIApp.ui().listening);
-        assert.equal(await ph.page.inputValue('[data-bind="chatText"]'), 'make a reel about my chai stall', 'draft survives the re-render');
-        assert.equal(await ph.page.locator('#mic-hint').count(), 0);
-        assert.equal(await ph.page.locator('.studio-card').count(), 0, 'nothing is sent until you tap Send');
-        await act(ph.page, 'chat');
-        await ph.page.waitForFunction(() => document.querySelectorAll('.studio-set .studio-card').length === 6);
-      } else {
-        await ph.page.waitForSelector('#mic-hint');
-        assert.equal(await ph.page.evaluate(() => document.activeElement && document.activeElement.dataset.bind), 'chatText');
-      }
+    return ph;
+  };
+  const vstate = page => page.getAttribute('#voice-panel', 'data-state');
+  const waitState = (page, st) => page.waitForFunction(s => document.querySelector('#voice-panel').dataset.state === s, st);
+  const noErrors = ph => assert.deepEqual(ph.errors.filter(e => !/fonts|ERR_INTERNET_DISCONNECTED/.test(e)), []);
+  const cfgVoice = page => page.evaluate(() => window.LI_CONFIG.app.voice);
+
+  for (const scheme of ['light', 'dark']) {
+    const ph = await open(scheme);
+    const page = ph.page, tag = `0.5.0 ${scheme}`;
+    await step(`${tag}: the big mic is the hero of Home, reachable, with Stop and the replies toggle`, async () => {
+      const b = await page.locator('#mic-btn').boundingBox();
+      assert.ok(b.width >= 80 && b.height >= 80, 'big');
+      assert.ok(b.x >= 0 && b.x + b.width <= 390 && b.y + b.height <= 844 - 80, 'on the first screen, above the tab bar');
+      assert.equal(await vstate(page), 'idle');
+      assert.match(await page.textContent('#voice-status'), /Tap the mic/);
+      assert.ok(await page.locator('#voice-stop').isVisible() && await page.locator('#voice-stop').isDisabled(), 'Stop is visible, disabled while idle');
+      assert.ok(await page.locator('#voice-replies').isVisible());
+      const order = await page.evaluate(() => ['#voice-panel', '#chat', '[data-bind="chatText"]'].map(q => document.querySelector(q).getBoundingClientRect().top));
+      assert.deepEqual([...order].sort((a, c) => a - c), order, 'the mic comes first and the text box stays below it');
+      await layout(page, 'voice-idle');
+      await shot(page, `${scheme}-050-voice-idle`);
     });
-    await step(`0.4.0: voice ${mode}: no console errors`, async () => assert.deepEqual(ph.errors.filter(e => !/fonts|ERR_INTERNET_DISCONNECTED/.test(e)), []));
+
+    await step(`${tag}: tap mic -> listening with live transcript -> final result sends, cards render and the reply is spoken -> listening resumes`, async () => {
+      const xp0 = total(await S(page));
+      const v = await cfgVoice(page), vlang = await page.evaluate(() => window.LI_CONFIG.app.speech_lang);
+      await page.click('#mic-btn');
+      await waitState(page, 'listening');
+      assert.match(await page.textContent('#voice-status'), /Listening/);
+      assert.equal(await page.evaluate(() => window.__sr.lang), vlang);
+      assert.equal(await page.evaluate(() => window.__sr.interim), true, 'interim results on');
+      assert.ok(await page.locator('#voice-stop').isEnabled());
+      assert.notEqual(await page.locator('#voice-panel .pulse').evaluate(e => getComputedStyle(e).animationName), 'none', 'pulsing ring');
+      await page.evaluate(() => window.__say('a reel about my', false));
+      assert.equal(await page.textContent('#voice-heard'), 'a reel about my');
+      assert.equal(await page.locator('.studio-card').count(), 0, 'interim results do not send');
+      await layout(page, 'voice-listening');
+      await shot(page, `${scheme}-050-voice-listening`);
+      await page.evaluate(() => { window.__holdSpeech = true; });
+      await page.evaluate(t => window.__say(t, true), IDEA);
+      await page.waitForFunction(() => document.querySelectorAll('.studio-set .studio-card').length === 6);
+      await waitState(page, 'speaking');
+      const sp = await page.evaluate(() => window.__spoken);
+      assert.equal(sp.length, 1);
+      assert.match(sp[0].text, /^Top angle: .*One question: .*Best hook: /);
+      assert.ok(sp[0].text.length <= v.spoken_max_chars);
+      assert.equal(sp[0].rate, v.speech_rate);
+      assert.equal(sp[0].lang, vlang);
+      assert.equal(await page.evaluate(() => window.__sr.active), null, 'the mic is closed while the app speaks');
+      assert.equal(await page.evaluate(() => window.__sr.starts), 1);
+      await layout(page, 'voice-speaking');
+      await shot(page, `${scheme}-050-voice-speaking`);
+      await page.evaluate(() => { window.__holdSpeech = false; window.__finishSpeech(); });
+      await waitState(page, 'listening');
+      assert.equal(await page.evaluate(() => window.__sr.starts), 2, 'listening again');
+      assert.ok(await page.evaluate(() => !!window.__sr.active));
+      const st = await S(page);
+      assert.equal(st.chat.filter(m => m.from === 'me').pop().text, IDEA);
+      assert.equal(total(st), xp0, 'AI output earns no XP');
+    });
+
+    await step(`${tag}: a stop phrase ends the session and is not sent as a message`, async () => {
+      const before = (await S(page)).chat.length;
+      await page.evaluate(() => window.__say('Bas'));
+      await waitState(page, 'idle');
+      assert.equal((await S(page)).chat.length, before);
+      assert.equal(await page.evaluate(() => window.__sr.active), null);
+      assert.ok(await page.locator('#voice-stop').isDisabled());
+      assert.match(await toastText(page), /stopped/i);
+      await layout(page, 'voice-after-stop');
+    });
+    await step(`${tag}: no console errors`, async () => noErrors(ph));
+    await ph.context.close();
+  }
+
+  {
+    const ph = await open('light');
+    const page = ph.page;
+    await step('0.5.0: Stop button ends a session; tapping the mic while the app speaks interrupts it and listens (barge-in)', async () => {
+      await page.evaluate(() => { window.__holdSpeech = true; });
+      await page.click('#mic-btn');
+      await waitState(page, 'listening');
+      await page.evaluate(() => window.__say('hello'));
+      await waitState(page, 'speaking');
+      const c0 = await page.evaluate(() => window.__cancels);
+      await page.click('#mic-btn');
+      await waitState(page, 'listening');
+      assert.ok(await page.evaluate(() => window.__cancels) > c0, 'speech cancelled');
+      await page.waitForTimeout(150);
+      assert.equal(await vstate(page), 'listening', 'the cancelled utterance does not start a second listen');
+      assert.equal(await page.evaluate(() => window.__sr.starts), 2);
+      await page.click('#voice-stop');
+      await waitState(page, 'idle');
+      assert.equal(await page.evaluate(() => window.__sr.active), null);
+    });
+
+    await step('0.5.0: a different intent (stuck) speaks a short summary; the group plan too', async () => {
+      await page.evaluate(() => { window.__holdSpeech = false; window.__spoken.length = 0; });
+      await page.click('#mic-btn'); await waitState(page, 'listening');
+      await page.evaluate(() => window.__say("I'm stuck"));
+      await page.waitForSelector('[data-kind="stuck"]');
+      await waitState(page, 'listening');
+      await page.evaluate(() => window.__say('plan a shoot with friends'));
+      await page.waitForSelector('[data-kind="group"]');
+      await waitState(page, 'listening');
+      const sp = await page.evaluate(() => window.__spoken.map(s => s.text));
+      assert.match(sp[0], /^Start tiny\./);
+      assert.match(sp[1], /^Plan for \d+ people, about \d+ minutes\./);
+      await page.click('#voice-stop');
+    });
+
+    await step('0.5.0: idle timeout ends the session', async () => {
+      await page.evaluate(() => { window.LI_CONFIG.app.voice.idle_timeout_ms = 400; });
+      await page.click('#mic-btn'); await waitState(page, 'listening');
+      await waitState(page, 'idle');
+      assert.match(await toastText(page), /did not hear/i);
+      assert.equal(await page.evaluate(() => window.__sr.active), null);
+    });
+
+    await step('0.5.0: idle timeout still fires when the recognizer keeps ending with no speech', async () => {
+      await page.evaluate(() => { window.LI_CONFIG.app.voice.idle_timeout_ms = 900; window.LI_CONFIG.app.voice.restart_ms = 50; });
+      await page.click('#mic-btn'); await waitState(page, 'listening');
+      // Like Chrome: the listen ends on its own with no results, over and over.
+      await page.evaluate(() => { window.__endTimer = setInterval(() => { const r = window.__sr.active; if (r) { window.__sr.active = null; r.onend(); } }, 200); });
+      await waitState(page, 'idle');
+      await page.evaluate(() => clearInterval(window.__endTimer));
+      assert.ok(await page.evaluate(() => window.__sr.starts) >= 3, 'it did restart');
+      assert.match(await toastText(page), /did not hear/i);
+      await page.evaluate(() => { window.LI_CONFIG.app.voice.restart_ms = 250; });
+    });
+
+    await step('0.5.0: hearing speech keeps the idle timer from firing', async () => {
+      await page.evaluate(() => { window.LI_CONFIG.app.voice.idle_timeout_ms = 600; });
+      await page.click('#mic-btn'); await waitState(page, 'listening');
+      await page.evaluate(() => window.__say('a reel about', false));
+      await page.waitForTimeout(900);
+      assert.equal(await vstate(page), 'listening');
+      await page.click('#voice-stop');
+      await page.evaluate(() => { window.LI_CONFIG.app.voice.idle_timeout_ms = 15000; });
+    });
+
+    await step('0.5.0: the turn limit ends the session after the last reply', async () => {
+      await page.evaluate(() => { window.LI_CONFIG.app.voice.max_turns = 2; });
+      await page.click('#mic-btn'); await waitState(page, 'listening');
+      await page.evaluate(() => window.__say('hello'));
+      await waitState(page, 'listening');
+      await page.evaluate(() => window.__say('thanks'));
+      await waitState(page, 'idle');
+      assert.match(await toastText(page), /turn limit/i);
+      await page.evaluate(() => { window.LI_CONFIG.app.voice.max_turns = 10; });
+    });
+
+    await step('0.5.0: an ended-by-the-browser listen with nothing heard restarts, and the app hidden stops everything', async () => {
+      await page.click('#mic-btn'); await waitState(page, 'listening');
+      const s0 = await page.evaluate(() => window.__sr.starts);
+      await page.evaluate(() => { const r = window.__sr.active; window.__sr.active = null; r.onend(); });
+      await page.waitForFunction(n => window.__sr.starts > n, s0);
+      assert.equal(await vstate(page), 'listening');
+      const c0 = await page.evaluate(() => window.__cancels);
+      await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { get: () => 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+      await waitState(page, 'idle');
+      assert.ok(await page.evaluate(() => window.__cancels) > c0, 'speech cancelled when hidden');
+      assert.equal(await page.evaluate(() => window.__sr.active), null);
+      await page.evaluate(() => { delete document.visibilityState; document.dispatchEvent(new Event('visibilitychange')); });
+    });
+
+    await step('0.5.0: mute toggle on Home suppresses speech, persists, and mirrors in Settings', async () => {
+      assert.equal((await S(page)).voice.replies, true);
+      await page.evaluate(() => { window.__spoken.length = 0; });
+      await page.click('#voice-replies');
+      assert.equal((await S(page)).voice.replies, false);
+      assert.match(await page.textContent('#voice-replies'), /off/);
+      await page.click('#mic-btn'); await waitState(page, 'listening');
+      await page.evaluate(() => window.__say('hello'));
+      await page.waitForFunction(() => document.querySelectorAll('.msg.coach').length > 3);
+      await waitState(page, 'listening');
+      assert.equal(await page.evaluate(() => window.__spoken.length), 0, 'nothing spoken while muted');
+      await page.click('#voice-stop');
+      await page.reload();
+      await page.waitForSelector('.tabbar');
+      assert.equal((await S(page)).voice.replies, false, 'persisted');
+      await act(page, 'tab', '[data-tab="you"]');
+      await page.waitForSelector('#settings-voice-replies');
+      assert.equal(await page.getAttribute('#settings-voice-replies', 'aria-pressed'), 'false');
+      await page.click('#settings-voice-replies');
+      assert.equal((await S(page)).voice.replies, true);
+      await layout(page, 'you-voice-settings');
+    });
+    await step('0.5.0: no console errors', async () => noErrors(ph));
+    await ph.context.close();
+  }
+
+  {
+    const ph = await open('light', { deny: true });
+    await step('0.5.0: microphone permission denied falls back to #mic-hint and the text box', async () => {
+      await ph.page.click('#mic-btn');
+      await ph.page.waitForSelector('#mic-hint');
+      assert.match(await ph.page.textContent('#mic-hint'), /blocked/i);
+      assert.equal(await vstate(ph.page), 'idle');
+      assert.equal(await ph.page.evaluate(() => document.activeElement && document.activeElement.dataset.bind), 'chatText');
+      await layout(ph.page, 'mic-denied');
+    });
+    await step('0.5.0: no console errors when the mic is denied', async () => noErrors(ph));
     await ph.context.close();
   }
 }
@@ -1475,6 +1683,7 @@ try {
   await v020Checks();
   await v030Checks();
   await v040Checks();
+  await v050Checks();
   await artifactRun('light');
   await artifactRun('dark');
   await storageBlocked();

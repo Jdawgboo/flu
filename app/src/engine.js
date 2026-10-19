@@ -345,7 +345,10 @@
     // v3: the blackboard (a freeform note, sticky cards and the notes saved for XP).
     const b = state.board && typeof state.board === 'object' ? state.board : {};
     state.board = { text: typeof b.text === 'string' ? b.text : '', cards: Array.isArray(b.cards) ? b.cards : [], saves: Array.isArray(b.saves) ? b.saves : [] };
-    state.v = Math.max(state.v || 0, 3);
+    // v4: spoken replies on or off (voice mode), on by default.
+    const vo = state.voice && typeof state.voice === 'object' ? state.voice : {};
+    state.voice = { replies: typeof vo.replies === 'boolean' ? vo.replies : true };
+    state.v = Math.max(state.v || 0, 4);
     return state;
   }
 
