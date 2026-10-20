@@ -73,10 +73,13 @@ async function step(name, fn) {
 
 const PHONE = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Mobile Safari/537.36' };
 
+// The shipped config points at the live AI Worker; tests stay offline unless they stub one themselves.
+const blankAi = t => t.replace(/"ai_api_base": "[^"]*"/, '"ai_api_base": ""');
 async function newPhone(scheme, { workers = false } = {}) {
   const context = await browser.newContext({ ...PHONE, colorScheme: scheme, serviceWorkers: workers ? 'allow' : 'block', permissions: ['clipboard-read', 'clipboard-write'] });
   // Fonts come from Google; keep tests offline and deterministic.
   await context.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  await context.route(/\/config\.js$/, async r => r.fulfill({ status: 200, contentType: 'text/javascript', body: blankAi(await readFile(path.join(dist, 'config.js'), 'utf8')) }));
   const page = await context.newPage();
   currentPage = page;
   const errors = [];
@@ -1149,7 +1152,7 @@ async function v030Checks() {
   // Real mode: point ig_api_base at a fake service and follow the redirect back with #ig=<code>.
   async function realPhone(profileReply) {
     const ph = await newPhone('light');
-    const cfgJs = (await readFile(path.join(dist, 'config.js'), 'utf8')).replace('"ig_api_base": ""', '"ig_api_base": "https://ig.test"');
+    const cfgJs = blankAi(await readFile(path.join(dist, 'config.js'), 'utf8')).replace('"ig_api_base": ""', '"ig_api_base": "https://ig.test"');
     await ph.context.route(/\/config\.js$/, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: cfgJs }));
     ph.calls = [];
     await ph.context.route('https://ig.test/**', async r => {
@@ -1714,7 +1717,7 @@ async function v060Checks() {
     const ph = await newPhone('light');
     ph.calls = [];
     if (mode !== 'off') {
-      const cfgJs = (await readFile(path.join(dist, 'config.js'), 'utf8')).replace('"ai_api_base": ""', '"ai_api_base": "https://ai.test"');
+      const cfgJs = (await readFile(path.join(dist, 'config.js'), 'utf8')).replace(/"ai_api_base": "[^"]*"/, '"ai_api_base": "https://ai.test"');
       await ph.context.route(/\/config\.js$/, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: cfgJs }));
     }
     await ph.context.route('https://ai.test/**', async r => {

@@ -6,7 +6,7 @@ ig_api_base: ""
 
 # ai_api_base: URL of a deployed services/ai Worker, no trailing slash. Empty means the
 # built-in deterministic mock agents answer (no network calls). See docs/STUDIO.md.
-ai_api_base: ""
+ai_api_base: "https://lockin-ai.jash-flu-app.workers.dev"
 # AI client (used only when ai_api_base is set). The id header is sent with every call so the Worker
 # can rate-limit per install; retry_after_s is the pause after a 429 that did not say how long.
 ai:
