@@ -1,6 +1,6 @@
 # ig-connect
 
-Cloudflare Worker that connects a creator's Instagram account to LockIn using the Instagram API with Instagram Login (scope `instagram_business_basic`). The app never sees the app secret or the long-lived token. It is a Phase 2 skeleton: nothing here is deployed, and no real secrets are in the repo.
+Cloudflare Worker that connects a creator's Instagram account to LockIn using the Instagram API with Instagram Login (scopes `instagram_business_basic` and `instagram_business_manage_insights`). The app never sees the app secret or the long-lived token. It is a Phase 2 skeleton: nothing here is deployed, and no real secrets are in the repo.
 
 Setup by hand is in `docs/INSTAGRAM.md`.
 

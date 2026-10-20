@@ -1052,7 +1052,7 @@ async function v030Checks() {
     assert.equal(st.ob.step, 'confirm'); assert.equal(st.ob.data.niche, 'food'); assert.equal(st.ob.data.language, 'english');
     assert.equal(st.instagram.demo, true); assert.equal(st.instagram.verified, false); assert.equal(st.followers, 3100);
     assert.equal(st.posts.length, 12);
-    assert.ok(st.posts.every(p => p.source === 'instagram' && p.verified === false && p.views === null));
+    assert.ok(st.posts.every(p => p.source === 'instagram' && p.verified === false && p.views > 0 && p.reach > 0 && p.caption), 'sample posts carry insights and captions');
     assert.equal(st.profile, null, 'nothing is final before the confirm screen');
     await layout(page, 'confirm');
     await shot(page, '030-confirm');
@@ -1091,6 +1091,21 @@ async function v030Checks() {
     assert.match(await page.locator('.tier, #app').first().textContent(), /Starter/);
     await layout(page, 'you-ig');
     await shot(page, '030-you-instagram');
+  });
+
+  await step('0.7.0: Analytics opens from What\'s working with takeaways, groups, captions and top posts', async () => {
+    await act(page, 'analytics');
+    await page.waitForSelector('#analytics-takeaways');
+    assert.match(await page.locator('h1').first().textContent(), /Analytics/);
+    assert.match(await page.locator('.screen').first().textContent(), /sample data/);
+    assert.ok(await page.locator('#analytics-takeaways li').count() >= 1, 'at least one takeaway');
+    assert.match(await page.locator('#analytics-totals').textContent(), /Median reach/);
+    for (const id of ['#analytics-trend', '#analytics-format', '#analytics-day', '#analytics-time', '#analytics-captions', '#analytics-rhythm', '#analytics-top', '#analytics-bottom']) assert.equal(await page.locator(id).count(), 1, id);
+    assert.equal(await page.locator('#analytics-top .li').count(), 3);
+    await layout(page, 'analytics');
+    await shot(page, '070-analytics');
+    await act(page, 'back');
+    await page.waitForSelector('#whats-working');
   });
 
   await step('0.3.0: demo refresh is a no-op toast; disconnect is two-step and deletes imported data', async () => {

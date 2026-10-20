@@ -16,6 +16,7 @@ export const Studio = require(path.join(root, 'app/src/studio.js'));
 export const Voice = require(path.join(root, 'app/src/voice.js'));
 export const Llm = require(path.join(root, 'app/src/llm.js'));
 export const Router = require(path.join(root, 'app/src/router.js'));
+export const Analytics = require(path.join(root, 'app/src/analytics.js'));
 
 function loadConfig(file = 'gamification.yaml') {
   const text = readFileSync(path.join(root, 'config', file), 'utf8');
