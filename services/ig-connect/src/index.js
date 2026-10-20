@@ -1,5 +1,6 @@
 /* LockIn Instagram connect service: a small Cloudflare Worker that does the OAuth dance for the
- * Instagram API with Instagram Login (scope instagram_business_basic) so the app never sees the
+ * Instagram API with Instagram Login (scopes instagram_business_basic and
+ * instagram_business_manage_insights) so the app never sees the
  * app secret or a long-lived token. Skeleton for Phase 2; not deployed. See README.md.
  *
  *   GET  /auth/start?return=<app url>   send the user to Instagram
@@ -16,17 +17,29 @@
 const IG_AUTHORIZE = 'https://www.instagram.com/oauth/authorize';
 const IG_TOKEN = 'https://api.instagram.com/oauth/access_token';
 const IG_GRAPH = 'https://graph.instagram.com';
-const SCOPE = 'instagram_business_basic';
+const SCOPE = 'instagram_business_basic,instagram_business_manage_insights';
 const ACCOUNT_TYPES = ['BUSINESS', 'MEDIA_CREATOR'];
 const STATE_TTL_MS = 10 * 60 * 1000;
 const CODE_TTL_S = 600;
 const SESSION_TTL_S = 60 * 24 * 60 * 60; // long-lived Instagram tokens last 60 days
 const PROFILE_FIELDS = 'user_id,username,name,account_type,biography,profile_picture_url,followers_count,follows_count,media_count';
 const MEDIA_FIELDS = 'id,caption,media_type,permalink,timestamp,like_count,comments_count';
+const INSIGHT_METRICS = 'reach,saved,shares,views'; // lifetime per-post numbers for Analytics
 
 const enc = new TextEncoder(), dec = new TextDecoder();
 
 // ---------- pure helpers (unit tested) ----------
+
+/* Instagram insights ({ data: [{ name, values: [{ value }] }] } or total_value) to { reach, saved, ... }.
+ * A post without insights (for example one made before the account went professional) gives null. */
+export function parseInsights(body) {
+  const out = {};
+  ((body && body.data) || []).forEach(d => {
+    const v = d && (d.total_value ? d.total_value.value : Array.isArray(d.values) && d.values[0] ? d.values[0].value : null);
+    if (d && typeof d.name === 'string' && typeof v === 'number' && isFinite(v)) out[d.name] = v;
+  });
+  return Object.keys(out).length ? out : null;
+}
 
 export function b64urlEncode(bytes) {
   let s = '';
@@ -164,6 +177,9 @@ async function fetchProfile(token) {
   if (!ACCOUNT_TYPES.includes(me.account_type)) return { me, media: null };
   let media = [];
   try { media = (await igGet('/me/media', { fields: MEDIA_FIELDS, limit: '30', access_token: token })).data || []; } catch (e) { /* profile alone is still useful */ }
+  await Promise.all(media.map(async m => {
+    try { m.insights = parseInsights(await igGet(`/${encodeURIComponent(m.id)}/insights`, { metric: INSIGHT_METRICS, access_token: token })); } catch (e) { m.insights = null; }
+  }));
   return { me, media };
 }
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0 — 2026-10-20 · Analytics on everything
+Jash's ask: "give major analytics on everything", for his own use (no public release, so tester mode is enough and no App Review is needed). Agent-Reach was reviewed and not wired in: its Instagram channel only drives a logged-in desktop Chrome through OpenCLI, so it cannot run in the app or the Worker.
+
+- `app/src/analytics.js` (new, pure UMD): `analyze(posts, followers, cfg, now)` scores each imported Instagram post (likes, comments, saves and shares per 100 reached, or per 100 followers without insights) and returns totals, groups by format, weekday and time of day, caption-trait comparisons (question or number in the hook, ₹ price, Hinglish, call to action, emoji, hashtags, caption length), posting rhythm, an 8-week trend, top and lowest posts and up to 6 plain-language takeaways. Groups with too few posts are shown but never become takeaways.
+- App: an Analytics screen, opened from "Open full analytics" on What's working (only when Instagram is connected). Sample creator now has captions plus reach, views, saves and shares so the screen works in demo mode.
+- Import: `mediaToPosts` keeps the caption (500 chars), the local posting hour and per-post insights (`views`, `reach`, `saves`, `shares`); missing insights stay null.
+- `services/ig-connect`: scope adds `instagram_business_manage_insights`; each post's lifetime `reach,saved,shares,views` is fetched (`parseInsights`); a post without insights gets `null` and the rest still load. Add that permission to the Meta app before reconnecting.
+- Config: new `analytics:` block in `config/gamification.yaml` (min posts, group size, lift threshold, trend weeks, time slots, caption length cut-offs).
+- Tests: `tests/unit/analytics.test.mjs`, Worker insights tests, one phone test for the screen.
+
 ## 0.6.0 — 2026-10-19 · Real AI for the Idea Studio (Gemini, free tier)
 Jash will use a free Google Gemini key. The studio's agents can now run on a real model behind a provider-agnostic Worker. Mock mode is still the default and the fallback: with `ai_api_base` empty nothing goes over the network. Nothing is deployed and no key is in the repo.
 

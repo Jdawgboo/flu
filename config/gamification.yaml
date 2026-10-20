@@ -97,3 +97,22 @@ insights:
   pace_tolerance: 0.5            # nudge when posts so far trail the even pace by more than this
   pace_days_left: 4              # ...and this many days or fewer remain in the week, today included
   views_prompt_after_days: 2     # ask for views on a manual post this many days after it went out
+
+# Analytics screen (0.7.0): everything learned from imported Instagram posts. See app/src/analytics.js.
+analytics:
+  min_posts: 3                   # fewer imported posts than this and the screen asks for more
+  min_group_posts: 2             # a format, day, time slot or caption trait needs this many posts to be compared
+  lift_threshold: 1.2            # a group must beat (or trail) the average by 20% to become a takeaway
+  max_takeaways: 6
+  top_n: 3                       # top and bottom posts shown
+  trend_weeks: 8
+  window_days: 28                # "recent" posting pace
+  gap_warning_days: 7            # flag when the last post is this many days old
+  many_hashtags: 3               # this many hashtags counts as "several"
+  caption_short_chars: 60
+  caption_long_chars: 150
+  time_slots:                    # local hour, from inclusive, to exclusive; night wraps past midnight
+    - { label: Morning, from: 5, to: 11 }
+    - { label: Midday, from: 11, to: 15 }
+    - { label: Evening, from: 15, to: 20 }
+    - { label: Night, from: 20, to: 5 }

@@ -14,6 +14,7 @@
   const MIN_POSTS_FOR_GOAL = 3; // fewer than this and we fall back to the suggested goal
   const MIN_NICHE_HITS = 2;     // a niche needs at least this many keyword hits to be suggested
   const HINGLISH_SHARE = 0.3;   // share of captions in Hinglish that makes Hinglish the suggestion
+  const CAPTION_MAX = 500;      // caption characters kept per imported post, for Analytics
 
   const FORMATS = { VIDEO: 'Reel', REELS: 'Reel', CAROUSEL_ALBUM: 'Carousel', IMAGE: 'Post' };
 
@@ -67,8 +68,9 @@
     return { name: first.slice(0, 40), niche, language, weeklyGoal, notes };
   }
 
-  /* Media to state.posts rows. Always verified:false; views stay null because Instagram's
-   * basic scope has no view counts. Likes and comments are kept for the engagement view. */
+  /* Media to state.posts rows. Always verified:false. Views, reach, saves and shares come from
+   * the post's insights when the connect service sent them, else they stay null. Likes, comments,
+   * the caption and the local posting hour are kept for "What's working" and Analytics. */
   function mediaToPosts(ig, now) {
     const loggedOn = Engine.localDay(now == null ? Date.now() : now);
     const out = [];
@@ -76,10 +78,13 @@
       const t = parseTime(m.timestamp);
       if (t == null) return;
       const n = v => (typeof v === 'number' && isFinite(v) && v >= 0 ? Math.floor(v) : null);
+      const ins = m.insights && typeof m.insights === 'object' ? m.insights : {};
       out.push({
         id: 'ig_' + String(m.id == null ? t : m.id), ideaId: null, date: Engine.localDay(t), platform: 'instagram',
-        format: FORMATS[m.media_type] || 'Post', views: null, note: '', source: 'instagram', verified: false, loggedOn,
-        likes: n(m.like_count), comments: n(m.comments_count), permalink: typeof m.permalink === 'string' ? m.permalink : ''
+        format: FORMATS[m.media_type] || 'Post', views: n(ins.views), note: '', source: 'instagram', verified: false, loggedOn,
+        likes: n(m.like_count), comments: n(m.comments_count), permalink: typeof m.permalink === 'string' ? m.permalink : '',
+        caption: typeof m.caption === 'string' ? m.caption.slice(0, CAPTION_MAX) : '', hour: new Date(t).getHours(),
+        reach: n(ins.reach), saves: n(ins.saved), shares: n(ins.shares)
       });
     });
     return out;
@@ -91,24 +96,27 @@
     const t = now == null ? Date.now() : now;
     const at = (daysAgo, hour) => { const d = new Date(t - daysAgo * DAY); d.setHours(hour, 0, 0, 0); return d.toISOString(); };
     const rows = [
-      [1, 18, 'REELS', 'This ₹80 dosa in Koramangala beats every ₹400 brunch. Full thali review inside', 2140, 96],
-      [3, 12, 'CAROUSEL_ALBUM', '5 street food spots in Indiranagar under ₹150, saved for your next cafe run', 880, 41],
-      [5, 19, 'REELS', 'Yaar ye biryani kya ekdum mast hai, bas ek bite aur sab bhool jaoge', 1520, 77],
-      [8, 11, 'REELS', 'Filter coffee vs cold coffee: which one is worth your money?', 960, 38],
-      [10, 17, 'IMAGE', 'Sunday brunch menu at the new cafe. Honest taste test coming soon', 410, 19],
-      [12, 20, 'REELS', 'I tried every momos stall on one street so you do not have to', 1830, 88],
-      [15, 13, 'CAROUSEL_ALBUM', 'Masala chai recipe in 4 steps. Save this for the monsoon', 720, 30],
-      [18, 18, 'REELS', 'The paneer roll everyone in Bengaluru is queueing for, worth it?', 1190, 52],
-      [21, 12, 'IMAGE', 'Weekend snack haul from the local market', 330, 14],
-      [24, 19, 'REELS', 'Why your homemade dosa never gets crisp, and the kitchen fix', 1670, 71],
-      [29, 14, 'CAROUSEL_ALBUM', 'Restaurant week picks: where to eat on a student budget', 540, 22],
-      [33, 18, 'REELS', 'Street food tour: the best chaat in town', 1010, 45]
+      [1, 18, 'REELS', 'This ₹80 dosa in Koramangala beats every ₹400 brunch. Full thali review inside', 2140, 96, 9800, 210, 140],
+      [3, 12, 'CAROUSEL_ALBUM', '5 street food spots in Indiranagar under ₹150, saved for your next cafe run', 880, 41, 4200, 190, 35],
+      [5, 19, 'REELS', 'Yaar ye biryani kya ekdum mast hai, bas ek bite aur sab bhool jaoge', 1520, 77, 8900, 60, 95],
+      [8, 11, 'REELS', 'Filter coffee vs cold coffee: which one is worth your money?', 960, 38, 7600, 40, 30],
+      [10, 17, 'IMAGE', 'Sunday brunch menu at the new cafe. Honest taste test coming soon', 410, 19, 3900, 12, 6],
+      [12, 20, 'REELS', 'I tried every momos stall on one street so you do not have to', 1830, 88, 8200, 120, 110],
+      [15, 13, 'CAROUSEL_ALBUM', 'Masala chai recipe in 4 steps. Save this for the monsoon', 720, 30, 3600, 150, 20],
+      [18, 18, 'REELS', 'The paneer roll everyone in Bengaluru is queueing for, worth it?', 1190, 52, 9100, 70, 60],
+      [21, 12, 'IMAGE', 'Weekend snack haul from the local market', 330, 14, 3400, 8, 4],
+      [24, 19, 'REELS', 'Why your homemade dosa never gets crisp, and the kitchen fix', 1670, 71, 6400, 180, 70],
+      [29, 14, 'CAROUSEL_ALBUM', 'Restaurant week picks: where to eat on a student budget', 540, 22, 3800, 95, 15],
+      [33, 18, 'REELS', 'Street food tour: the best chaat in town', 1010, 45, 8700, 30, 40]
     ];
     return {
       username: 'priya.eats', name: 'Priya', account_type: 'MEDIA_CREATOR',
       biography: 'Street food, chai and cafes of Bengaluru. Honest reviews, no filters.',
       profile_picture_url: '', followers_count: 3100, follows_count: 412, media_count: rows.length,
-      media: rows.map((r, i) => ({ id: 'sample' + (i + 1), caption: r[3], media_type: r[2], permalink: '', timestamp: at(r[0], r[1]), like_count: r[4], comments_count: r[5] })),
+      media: rows.map((r, i) => ({
+        id: 'sample' + (i + 1), caption: r[3], media_type: r[2], permalink: '', timestamp: at(r[0], r[1]), like_count: r[4], comments_count: r[5],
+        insights: { reach: r[6], views: r[2] === 'REELS' ? r[6] * 2 : r[6], saved: r[7], shares: r[8] }
+      })),
       session: ''
     };
   }

@@ -22,12 +22,12 @@ Only birth date and niche are required overall. Connect accounts must be creator
 
 1. Go to developers.facebook.com and create an app. Choose the use case **Instagram API with Instagram login** (Business Login for Instagram).
 2. In the app's Instagram settings, open Business Login settings and add the OAuth redirect URI `https://<your-worker>/auth/callback` (the worker URL from step 3 below, exactly, no trailing slash).
-3. Add the permission `instagram_business_basic`.
+3. Add the permissions `instagram_business_basic` and `instagram_business_manage_insights` (per-post reach, views, saves and shares for Analytics).
 4. Copy the Instagram app ID and app secret (keep the secret out of the repo).
 5. Before App Review, only people with a role can connect. Under **App roles → Roles**, add **Instagram testers** and enter Instagram usernames (yours first).
 6. Switch your Instagram account to Creator or Business: Instagram → Settings → Account type and tools → Switch to professional account → Creator.
 7. Accept the tester invite in Instagram: Settings → Apps and websites → Tester invites.
-8. Public use needs **App Review** and business verification for `instagram_business_basic`. This takes weeks. Until it passes, nobody outside the tester list can connect.
+8. Public use needs **App Review** and business verification for both permissions. This takes weeks. Until it passes, nobody outside the tester list can connect. For personal use, staying in tester mode is enough.
 
 ## 3. Cloudflare setup (by hand)
 

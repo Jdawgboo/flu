@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  const E = window.LIEngine, C = window.LIContent, G = window.LIGrader, K = window.LICoach, IGM = window.LIInstagram, ST = window.LIStudio, R = window.LIRouter, V = window.LIVoice, LL = window.LILlm;
+  const E = window.LIEngine, C = window.LIContent, G = window.LIGrader, K = window.LICoach, IGM = window.LIInstagram, ST = window.LIStudio, R = window.LIRouter, V = window.LIVoice, LL = window.LILlm, AN = window.LIAnalytics;
   const cfg = window.LI_CONFIG;
   const APP = cfg.app || {};
   const SC = APP.studio;
@@ -905,6 +905,7 @@
     if (v.kind === 'board') return boardView();
     if (v.kind === 'lessons') return lessonsView();
     if (v.kind === 'lesson') return lessonView(v);
+    if (v.kind === 'analytics') return analyticsView();
     ui.view = null;
     return homeView();
   }
@@ -1398,7 +1399,80 @@
         ${eng.groups.length ? `<div class="list">${eng.groups.map(g => `<div class="li small"><span class="grow">${esc(name(g.platform, g.format, 'posts'))}: median <span class="num">${fmtNum(g.median)}</span> likes + comments (${plural(g.posts, 'post')})</span></div>`).join('')}</div>` : ''}
         ${eng.best ? `<p class="small"><b>Most engaged:</b> ${esc(eng.best.format || 'Post')}, <span class="num">${fmtNum(eng.best.score)}</span> likes + comments (counts come from Instagram)</p>` : ''}` : ''}
       <p class="small muted">Self-reported. Compared only with your own posts.</p>
+      ${state.instagram ? '<button class="btn soft block" data-action="analytics">Open full analytics</button>' : ''}
     </div>`;
+  }
+
+  // ---------- analytics ----------
+
+  const pctTxt = x => (x == null ? '–' : x >= 10 ? Math.round(x) + '%' : x.toFixed(1) + '%');
+  const liftTxt = l => (l == null ? '' : l >= 1 ? `+${Math.round((l - 1) * 100)}%` : `−${Math.round((1 - l) * 100)}%`);
+  const liftPill = l => (l == null ? '' : `<span class="pill ${l >= cfg.analytics.lift_threshold ? 'good' : l <= 1 / cfg.analytics.lift_threshold ? 'bad' : ''} num">${liftTxt(l)}</span>`);
+
+  // Bars scaled to the best group; groups with too few posts are shown faded with their count.
+  function groupBars(title, groups, id) {
+    if (!groups.length) return '';
+    const max = Math.max(...groups.map(g => g.er || 0)) || 1;
+    return `<div class="card" id="${id}"><h2>${esc(title)}</h2><div class="list">${groups.map(g => `<div class="li small stack" style="gap:6px;align-items:stretch${g.enough ? '' : ';opacity:.55'}">
+        <div class="row between"><span class="grow"><b>${esc(g.key)}</b> <span class="muted">· ${plural(g.posts, 'post')}${g.enough ? '' : ', too few to compare'}</span></span><span class="num">${pctTxt(g.er)}</span>${g.enough ? liftPill(g.lift) : ''}</div>
+        <div class="bar"><i style="width:${Math.round((g.er || 0) / max * 100)}%"></i></div></div>`).join('')}</div></div>`;
+  }
+
+  function postCard(p) {
+    const tags = p.traits ? Object.keys(AN.TRAIT_LABEL).filter(k => p.traits[k]).map(k => `<span class="pill">${esc(AN.TRAIT_LABEL[k])}</span>`).join(' ') : '';
+    const extra = [p.reach != null ? `${fmtNum(p.reach)} reach` : '', p.views != null ? `${fmtNum(p.views)} views` : '', p.saves != null ? `${fmtNum(p.saves)} saves` : '', p.shares != null ? `${fmtNum(p.shares)} shares` : ''].filter(Boolean).join(' · ');
+    return `<div class="li small stack" style="gap:4px;align-items:stretch">
+      <div class="row between"><b>${esc(p.format)} · ${esc(postDayLabel(p.date))}</b><span class="num">${pctTxt(p.er)}</span>${liftPill(p.lift)}</div>
+      ${p.caption ? `<div>${esc(p.caption.slice(0, 120))}${p.caption.length > 120 ? '…' : ''}</div>` : ''}
+      <div class="muted">${fmtNum(p.likes)} likes · ${fmtNum(p.comments)} comments${extra ? ' · ' + extra : ''}</div>
+      ${tags ? `<div class="row wrap" style="gap:4px">${tags}</div>` : ''}</div>`;
+  }
+
+  function analyticsView() {
+    const ig = state.instagram;
+    const r = AN.analyze(state.posts, ig ? ig.followers_count : state.followers, cfg, now());
+    const head = `<section class="screen">${backBar('Analytics')}<h1>Analytics</h1>
+      <p class="muted small">${ig ? `@${esc(ig.username)} · ` : ''}from your imported Instagram posts${ig && ig.demo ? ' (sample data)' : ''}. Compared only with your own posts.</p>`;
+    if (!r.ready) {
+      return head + `<div class="card" id="analytics-empty"><p>We need at least ${r.needed} imported Instagram posts with likes to analyse. We have ${r.posts}.</p>
+        ${ig ? '<button class="btn soft block" data-action="ig-refresh">Refresh from Instagram</button>' : '<button class="btn soft block" data-action="tab" data-tab="you">Connect Instagram in You</button>'}</div></section>`;
+    }
+    const T = r.totals, rh = r.rhythm;
+    const erNote = T.erBase === 'reach' ? 'Engagement = likes, comments, saves and shares per 100 people reached.' : 'Engagement = likes and comments per 100 followers. Connect with insights for reach, saves and shares.';
+    const tmax = Math.max(...r.trend.weeks.map(w => w.er || 0)) || 1;
+    return head + `
+      <div class="card hero" id="analytics-takeaways"><span class="label">What to do next</span>
+        ${r.takeaways.length ? `<ul style="margin:6px 0 0;padding-left:18px">${r.takeaways.map(t => `<li class="small" style="margin:4px 0">${esc(t)}</li>`).join('')}</ul>` : '<p class="small">No clear pattern yet. Keep posting and mix formats so we can compare.</p>'}
+      </div>
+      <div class="stats" id="analytics-totals">
+        <div class="stat"><div class="v num">${pctTxt(T.medianEr)}</div><div class="k">Median engagement</div></div>
+        <div class="stat"><div class="v num">${rh.perWeek.toFixed(1)}</div><div class="k">Posts a week</div></div>
+        <div class="stat"><div class="v num">${rh.daysSinceLast}</div><div class="k">Days since last post</div></div>
+        <div class="stat"><div class="v num">${fmtNum(T.likes)}</div><div class="k">Likes</div></div>
+        <div class="stat"><div class="v num">${fmtNum(T.comments)}</div><div class="k">Comments</div></div>
+        ${T.hasInsights ? `<div class="stat"><div class="v num">${fmtNum(T.medianReach)}</div><div class="k">Median reach</div></div>
+        <div class="stat"><div class="v num">${fmtNum(T.views)}</div><div class="k">Views</div></div>
+        <div class="stat"><div class="v num">${T.saveRate == null ? '–' : T.saveRate.toFixed(1)}</div><div class="k">Saves per 100 reached</div></div>
+        <div class="stat"><div class="v num">${T.shareRate == null ? '–' : T.shareRate.toFixed(1)}</div><div class="k">Shares per 100 reached</div></div>` : ''}
+      </div>
+      <p class="small muted">${esc(erNote)} Based on ${plural(T.posts, 'post')}.</p>
+      <div class="card" id="analytics-trend"><h2>Trend</h2><p class="small muted">Median engagement per week, last ${r.trend.weeks.length} weeks${r.trend.change != null ? `. ${r.trend.change >= 0 ? 'Up' : 'Down'} ${Math.round(Math.abs(r.trend.change) * 100)}% on the earlier weeks` : ''}.</p>
+        <div class="row" style="align-items:flex-end;gap:4px;height:90px" role="img" aria-label="Weekly engagement trend">${r.trend.weeks.map(w => `<div class="grow" title="${w.weeksAgo ? w.weeksAgo + ' weeks ago' : 'This week'}: ${w.er == null ? 'no posts' : pctTxt(w.er)}" style="height:${w.er == null ? 3 : Math.max(6, Math.round(w.er / tmax * 100))}%;background:${w.er == null ? 'var(--surface-2)' : 'var(--brand)'};border-radius:6px 6px 2px 2px"></div>`).join('')}</div>
+        <div class="row between small muted"><span>${r.trend.weeks.length} weeks ago</span><span>This week</span></div></div>
+      ${groupBars('By format', r.byFormat, 'analytics-format')}
+      ${groupBars('By day', r.byWeekday, 'analytics-day')}
+      ${groupBars('By time of day', r.byTime, 'analytics-time')}
+      ${r.traits.length ? `<div class="card" id="analytics-captions"><h2>Caption style</h2><p class="small muted">Engagement on posts with each trait compared with posts without it.</p><div class="list">${r.traits.map(t => `<div class="li small"><span class="grow">${esc(t.label)} <span class="muted">· ${t.withPosts} vs ${t.withoutPosts} posts</span></span><span class="num">${pctTxt(t.withEr)} vs ${pctTxt(t.withoutEr)}</span>${liftPill(t.lift)}</div>`).join('')}</div></div>` : ''}
+      <div class="card" id="analytics-rhythm"><h2>Posting rhythm</h2><div class="list">
+        <div class="li small"><span class="grow">Usual gap between posts</span><span class="num">${rh.medianGap == null ? '–' : plural(rh.medianGap, 'day')}</span></div>
+        <div class="li small"><span class="grow">Longest gap</span><span class="num">${rh.longestGap == null ? '–' : plural(rh.longestGap, 'day')}</span></div>
+        <div class="li small"><span class="grow">Pace, last ${cfg.analytics.window_days} days</span><span class="num">${rh.recentPerWeek.toFixed(1)} a week</span></div>
+        ${T.commentsPerLike != null ? `<div class="li small"><span class="grow">Comments per 100 likes</span><span class="num">${(T.commentsPerLike * 100).toFixed(1)}</span></div>` : ''}
+        ${T.reachRate != null ? `<div class="li small"><span class="grow">Reach as a share of followers</span><span class="num">${pctTxt(T.reachRate)}</span></div>` : ''}
+      </div></div>
+      <div class="card" id="analytics-top"><h2>Top posts</h2><div class="list">${r.top.map(postCard).join('')}</div></div>
+      ${r.bottom.length ? `<div class="card" id="analytics-bottom"><h2>Lowest posts</h2><div class="list">${r.bottom.map(postCard).join('')}</div></div>` : ''}
+    </section>`;
   }
 
   function notifStatus() {
@@ -1843,6 +1917,7 @@
     },
     'rep-another': () => openRep(ui.view.from.type),
     lessons: () => go({ tab: 'practice', view: { kind: 'lessons' } }),
+    analytics: () => go({ view: { kind: 'analytics' } }),
     lesson: el => go({ view: { kind: 'lesson', id: el.dataset.id, picked: null } }),
     answer: el => {
       const v = ui.view;
